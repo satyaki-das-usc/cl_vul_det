@@ -1,0 +1,72 @@
+seed: 7
+num_workers: 8
+log_offline: false
+joern_path: joern/joern-parse
+split_token: false
+cleaning_method: delabel
+data_folder: data
+source_root_folder: source-code
+csv_folder: csv
+nodes_filename: nodes.csv
+edges_filename: edges.csv
+cpp_paths_filename: cpp_paths.json
+xml_filename: SARD_testcaseinfo.xml
+ground_truth_filename: ground_truth.json
+function_metadata_filename: function_metadata.json
+dataset_filename: function.json
+pairs_filename: vv_vn_pairs.json
+ignore_list_filename: ignore_list.json
+ignore_list_detection_result_filename: ignore_list_detection_result.json
+detection_result_filename: detection_result.json
+perturbation_result_filename: perturbation_result.json
+save_every_epoch: 1
+val_every_epoch: 1
+log_every_epoch: 10
+progress_bar_refresh_rate: 1
+dataset:
+  name: SARD
+  token:
+    max_parts: 16
+    is_wrapped: false
+    is_splitted: false
+    vocabulary_size: 190000
+gnn:
+  name: gcn
+  w2v_path: ${data_folder}/${dataset.name}/w2v.wv
+  embed_size: 256
+  hidden_size: 256
+  pooling_ratio: 0.8
+  drop_out: 0.5
+  n_hidden_layers: 3
+  n_head: 3
+  n_gru: 3
+  edge_sample_ratio: 0.8
+  rnn:
+    hidden_size: 256
+    num_layers: 1
+    drop_out: 0.5
+    use_bi: true
+    activation: relu
+classifier:
+  hidden_size: 512
+  n_hidden_layers: 2
+  n_classes: 2
+  drop_out: 0.5
+hyper_parameters:
+  vector_length: 128
+  n_epochs: 50
+  patience: 10
+  batch_size: 16
+  test_batch_size: 16
+  reload_dataloader: true
+  clip_norm: 5
+  val_every_step: 1.0
+  log_every_n_steps: 50
+  progress_bar_refresh_rate: 1
+  resume_from_checkpoint: DevignDeepWukong
+  shuffle_data: true
+  optimizer: Adam
+  nesterov: true
+  learning_rate: 0.002
+  weight_decay: 0
+  decay_gamma: 0.95
