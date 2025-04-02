@@ -1,0 +1,16 @@
+# Notebook
+ipykernel
+ipywidgets
+
+# Deep Learning
+torch
+pytorch-lightning
+wordninja
+transformers
+
+# Utilities
+omegaconf
+tqdm
+networkx
+pandas
+scikit-learn

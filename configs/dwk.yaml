@@ -1,19 +1,34 @@
 seed: 7
-num_workers: 8
+num_workers: -1
 log_offline: false
 joern_path: joern/joern-parse
 split_token: false
-cleaning_method: delabel
+cleaning_method: raw
+temp_root: temp/data
+pert_CPG_root: pert_CPG
+repo_root: SySeVRCopy
 data_folder: data
 source_root_folder: source-code
 csv_folder: csv
+slice_folder: slice
+VF_perts_root: VF_perts
+SF_perts_root: SF_perts
 nodes_filename: nodes.csv
 edges_filename: edges.csv
 cpp_paths_filename: cpp_paths.json
 xml_filename: SARD_testcaseinfo.xml
+file_slices_filename: file_slices.json
+all_slices_filename: all_slices.json
+train_slices_filename: train_slices.json
+eval_slices_filename: eval_slices.json
+test_slices_filename: test_slices.json
 ground_truth_filename: ground_truth.json
 function_metadata_filename: function_metadata.json
 dataset_filename: function.json
+bigvul_dataset_filename: processed_data.csv
+unperturbed_files_filename: unperturbed_file_list.json
+sensi_api_filename: sensi_api.json
+sensi_api_map_filename: sensi_api_map.json
 pairs_filename: vv_vn_pairs.json
 ignore_list_filename: ignore_list.json
 ignore_list_detection_result_filename: ignore_list_detection_result.json
@@ -70,3 +85,16 @@ hyper_parameters:
   learning_rate: 0.002
   weight_decay: 0
   decay_gamma: 0.95
+vul_feats:
+  - incorr_calc_buff_size
+  - buff_access_src_size
+  - off_by_one
+  - buff_overread
+  - double_free
+  - use_after_free
+  - buff_underwrite
+  - buff_underread
+  - sensi_read
+  - sensi_write
+use_custom_tokenizer: true
+tokenizer_name: microsoft/codebert-base
