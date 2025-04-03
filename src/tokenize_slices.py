@@ -73,13 +73,13 @@ def process_slice_parallel(slice_path, queue: Queue):
 if __name__ == "__main__":
     arg_parser = get_arg_parser()
     args = arg_parser.parse_args()
+    init_log()
+    
     config = cast(DictConfig, OmegaConf.load(args.config))
     if config.num_workers != -1:
         USE_CPU = min(config.num_workers, cpu_count())
     else:
         USE_CPU = cpu_count()
-    
-    init_log()
 
     if args.use_temp_data:
         all_slices_filepath = join(config.temp_root, config.all_slices_filename)
