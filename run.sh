@@ -22,9 +22,11 @@ pip install --cache-dir /media/satyaki/160f047a-dacc-449d-9208-a75717e899a1/pip_
 PYTHONPATH="." python src/generate_vf_slices.py --use_temp_data --only_clear_slices &&
 PYTHONPATH="." python src/generate_vf_slices.py --use_temp_data &&
 PYTHONPATH="." python src/tokenize_slices.py --use_temp_data &&
-PYTHONPATH="." python src/generate_file_slice_mapping.py --use_temp_data
+PYTHONPATH="." python src/generate_file_slice_mapping.py --use_temp_data &&
+PYTHONPATH="." python src/remove_duplicates.py --use_temp_data
 
 PYTHONPATH="." python src/generate_vf_slices.py --only_clear_slices &&
 PYTHONPATH="." python src/generate_vf_slices.py &&
 PYTHONPATH="." python src/tokenize_slices.py &&
-PYTHONPATH="." python src/generate_file_slice_mapping.py
+PYTHONPATH="." python src/generate_file_slice_mapping.py &&
+PYTHONPATH="." python src/remove_duplicates.py
