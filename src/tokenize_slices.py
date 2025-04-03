@@ -82,9 +82,10 @@ if __name__ == "__main__":
         USE_CPU = cpu_count()
 
     if args.use_temp_data:
-        all_slices_filepath = join(config.temp_root, config.all_slices_filename)
+        dataset_root = config.temp_root
     else:
-        all_slices_filepath = join(config.data_folder, config.all_slices_filename)
+        dataset_root = config.data_folder
+    all_slices_filepath = join(dataset_root, config.all_slices_filename)
     logging.info(f"Loading all generated slices from {all_slices_filepath}...")
     with open(all_slices_filepath, "r") as rfi:
         all_slices = json.load(rfi)
