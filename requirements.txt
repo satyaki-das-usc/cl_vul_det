@@ -6,6 +6,7 @@ ipywidgets
 torch
 pytorch-lightning
 wordninja
+gensim
 transformers
 
 # Utilities
