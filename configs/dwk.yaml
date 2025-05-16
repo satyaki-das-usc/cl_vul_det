@@ -112,7 +112,7 @@ implemented_vectorizers:
 implemented_models:
   - gcn
   - ggnn
-implemented_disntance_metrics:
+implemented_distance_metrics:
   - cosine
   - euclidean
   - kullback
