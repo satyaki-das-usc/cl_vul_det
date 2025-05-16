@@ -98,3 +98,19 @@ vul_feats:
   - sensi_write
 use_custom_tokenizer: true
 tokenizer_name: microsoft/codebert-base
+vectorizer_options:
+  - word2vec
+  - code2vec
+  - bpe
+  - codebert
+  - pdbert
+  - graphcodebert
+model_options:
+  - gcn
+  - ggnn
+disntance_metric_options:
+  - cosine
+  - euclidean
+  - kullback
+vectorizer: word2vec
+distance_metric: cosine
