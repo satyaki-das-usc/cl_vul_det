@@ -98,21 +98,21 @@ vul_feats:
   - sensi_write
 use_custom_tokenizer: true
 tokenizer_name: microsoft/codebert-base
-preprocessing_strategies:
+implemented_preprocessing:
   - remove_dependency_free_nodes
   - remove_unsatisfieable_conditions
   - refine_slicing
-vectorizer_options:
+implemented_vectorizers:
   - word2vec
   - code2vec
   - bpe
   - codebert
   - pdbert
   - graphcodebert
-model_options:
+implemented_models:
   - gcn
   - ggnn
-disntance_metric_options:
+implemented_disntance_metrics:
   - cosine
   - euclidean
   - kullback
