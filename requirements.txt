@@ -4,6 +4,7 @@ ipywidgets
 
 # Deep Learning
 torch
+torch-geometric
 pytorch-lightning
 wordninja
 gensim

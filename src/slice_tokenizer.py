@@ -190,7 +190,7 @@ class SliceTokenizer:
             else:
                 edge_sym_token = self.tokenizer.tokenize(edge_string)
             sym_slice_code += f"{start_node_sym_code}{edge_string}{end_node_sym_code}\n"
-            slice_sym_token_list += start_node_sym_code_tokens + [token for token in edge_sym_token if not token.startswith("-")] + end_node_sym_code_tokens
+            slice_sym_token_list.append(start_node_sym_code_tokens + [token for token in edge_sym_token if not token.startswith("-")] + end_node_sym_code_tokens)
             
 
         self.slice_graph.graph['slice_sym_code'] = sym_slice_code
