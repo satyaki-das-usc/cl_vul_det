@@ -14,19 +14,23 @@ export PATH=/media/satyaki/160f047a-dacc-449d-9208-a75717e899a1/research/minicon
 export TMPDIR=/media/satyaki/160f047a-dacc-449d-9208-a75717e899a1/pip_tmp
 
 conda remove --name cl_vul_det --all
-conda create -n cl_vul_det python=3.10
+conda create -n cl_vul_det python=3.10 notebook ipython
+conda deactivate
 conda activate cl_vul_det
 
 pip install --cache-dir /media/satyaki/160f047a-dacc-449d-9208-a75717e899a1/pip_cache -r requirements.txt
+pip install -r requirements.txt
 
 PYTHONPATH="." python src/generate_vf_slices.py --use_temp_data --only_clear_slices &&
 PYTHONPATH="." python src/generate_vf_slices.py --use_temp_data &&
 PYTHONPATH="." python src/tokenize_slices.py --use_temp_data &&
 PYTHONPATH="." python src/generate_file_slice_mapping.py --use_temp_data &&
-PYTHONPATH="." python src/remove_duplicates.py --use_temp_data
+PYTHONPATH="." python src/preprocess/remove_duplicates.py --use_temp_data &&
+PYTHONPATH="." python src/preprocess/word_embedding.py --use_temp_data
 
 PYTHONPATH="." python src/generate_vf_slices.py --only_clear_slices &&
 PYTHONPATH="." python src/generate_vf_slices.py &&
 PYTHONPATH="." python src/tokenize_slices.py &&
 PYTHONPATH="." python src/generate_file_slice_mapping.py &&
-PYTHONPATH="." python src/remove_duplicates.py
+PYTHONPATH="." python src/preprocess/remove_duplicates.py &&
+PYTHONPATH="." python src/preprocess/word_embedding.py
