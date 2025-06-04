@@ -40,7 +40,7 @@ def init_log():
     logging.info("=========New session=========")
     logging.info(f"Logging dir: {LOG_DIR}")
 
-def get_forward_slice(CPG: nx.DiGraph, line_no: int, vul_lines: Set[int]) -> List[nx.DiGraph]:
+def get_forward_slicelines(CPG: nx.DiGraph, line_no: int) -> Set[int]:
     slice_lines = set()
 
     forward_queue = []
@@ -61,15 +61,9 @@ def get_forward_slice(CPG: nx.DiGraph, line_no: int, vul_lines: Set[int]) -> Lis
     if len(slice_lines) == 0:
         return []
     
-    label = len(slice_lines.intersection(vul_lines)) > 0
-    slice_graph = CPG.subgraph(list(slice_lines)).copy()
-    slice_graph.graph["key_line"] = line_no
-    slice_graph.graph["type"] = "forward"
-    slice_graph.graph["label"] = label
+    return slice_lines
 
-    return [slice_graph]
-
-def get_backward_slice(CPG: nx.DiGraph, line_no: int, vul_lines: Set[int]) -> List[nx.DiGraph]:
+def get_backward_slicelines(CPG: nx.DiGraph, line_no: int) -> Set[int]:
     slice_lines = set()
 
     backward_queue = []
@@ -90,17 +84,30 @@ def get_backward_slice(CPG: nx.DiGraph, line_no: int, vul_lines: Set[int]) -> Li
     if len(slice_lines) == 0:
         return []
     
+    return slice_lines
+
+def get_both_slicelines(CPG: nx.DiGraph, line_no: int) -> Set[int]:
+
+    return get_forward_slicelines(CPG, line_no) | get_backward_slicelines(CPG, line_no)
+
+def get_slices_with_direction(CPG: nx.DiGraph, line_no: int, vul_lines: Set[int], direction: str) -> List[nx.DiGraph]:
+    slice_lines = set()
+    if direction == "forward":
+        slice_lines = get_forward_slicelines(CPG, line_no)
+    elif direction == "backward":
+        slice_lines = get_backward_slicelines(CPG, line_no)
+    elif direction == "both":
+        slice_lines = get_both_slicelines(CPG, line_no)
+    else:
+        raise ValueError(f"Invalid slice direction: {direction}")
+
     label = len(slice_lines.intersection(vul_lines)) > 0
     slice_graph = CPG.subgraph(list(slice_lines)).copy()
-    slice_graph.graph["key_line"] = line_no
-    slice_graph.graph["type"] = "backward"
     slice_graph.graph["label"] = label
+    slice_graph.graph["key_line"] = line_no
+    slice_graph.graph["type"] = direction
 
     return [slice_graph]
-
-def get_both_slices(CPG: nx.DiGraph, line_no: int, vul_lines: Set[int]) -> List[nx.DiGraph]:
-
-    return get_forward_slice(CPG, line_no, vul_lines) + get_backward_slice(CPG, line_no, vul_lines)
 
 def get_slices(CPG: nx.DiGraph, key_line_map: Dict[str, Set[int]], vul_lines: Set[int]) -> Dict[str, List[nx.DiGraph]]:
     if CPG is None:
@@ -139,12 +146,7 @@ def get_slices(CPG: nx.DiGraph, key_line_map: Dict[str, Set[int]], vul_lines: Se
             continue
         slice_direction = slice_directions[key]
         for line_no in lines:
-            if slice_direction == "forward":
-                slices[key].extend(get_forward_slice(CPG, line_no, vul_lines))
-            elif slice_direction == "backward":
-                slices[key].extend(get_backward_slice(CPG, line_no, vul_lines))
-            elif slice_direction == "both":
-                slices[key].extend(get_both_slices(CPG, line_no, vul_lines))
+            slices[key].extend(get_slices_with_direction(CPG, line_no, vul_lines, slice_direction))
 
     return slices
 
