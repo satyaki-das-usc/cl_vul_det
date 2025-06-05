@@ -7,12 +7,24 @@ from multiprocessing import cpu_count
 from omegaconf import DictConfig
 from typing import List, Optional
 from pytorch_lightning import LightningDataModule
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, Sampler
 
 from src.vocabulary import Vocabulary
 from src.torch_data.datasets import SliceDataset
 from src.torch_data.samples import SliceGraphSample, SliceGraphBatch
 
+class CustomSliceGraphBatchSampler(Sampler):
+    def __init__(self, dataset, custom_batches):
+        self.dataset = dataset
+        self.custom_batches = custom_batches  # Predefined list of index batches
+
+    def __iter__(self):
+        # Yield predefined batches (list of lists of indices)
+        for batch in self.custom_batches:
+            yield batch
+
+    def __len__(self):
+        return len(self.custom_batches)
 
 class SliceDataModule(LightningDataModule):
     def __init__(self, config: DictConfig, vocab: Vocabulary, use_temp_data: bool = False):
