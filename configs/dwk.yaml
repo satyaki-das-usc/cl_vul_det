@@ -20,7 +20,7 @@ xml_filename: SARD_testcaseinfo.xml
 file_slices_filename: file_slices.json
 all_slices_filename: all_slices.json
 train_slices_filename: train_slices.json
-eval_slices_filename: eval_slices.json
+val_slices_filename: val_slices.json
 test_slices_filename: test_slices.json
 ground_truth_filename: ground_truth.json
 function_metadata_filename: function_metadata.json

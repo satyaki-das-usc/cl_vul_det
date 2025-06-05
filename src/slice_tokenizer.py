@@ -58,7 +58,10 @@ class SliceTokenizer:
 
         self.main_set = frozenset({'main'})
         self.main_args = frozenset({'argc', 'argv'})
-
+        self.edge_type_map = {
+            "REACHES": "COMESFROM",
+            "CONTROLS": "FOLLOWS"
+        }
     
     def split_self_control_edge(self, start: int, end: int):
         assert self.slice_graph.has_edge(start, end), f"I love Elon Musk and Tesla and Donald Trump, but this is not a self control edge: {start} -> {end}"
@@ -170,6 +173,7 @@ class SliceTokenizer:
             end_node_sym_code_tokens = self.slice_graph.nodes[end]["code_sym_token"]
 
             edge_string = f"-{edge_data['label']}-"
+            edge_string_rev = f"-{self.edge_type_map[edge_data['label']]}-"
             if edge_data["label"] == 'REACHES':
                 raw_var_name = edge_data["var"].replace("*", "").strip()
                 if raw_var_name in ["NULL", "argc", "argv"]:
@@ -183,14 +187,20 @@ class SliceTokenizer:
                         sym_var_name = sym_var_name.replace(part, var_symbols[part])
                 nx.set_edge_attributes(self.slice_graph, {(start, end): {'var': sym_var_name}})
                 edge_string += f"{sym_var_name}-"
+                edge_string_rev += f"{sym_var_name}-"
             edge_string += ">"
+            edge_string_rev += ">"
             edge_sym_token = []
+            edge_rev_sym_token = []
             if self.tokenizer is None:
                 edge_sym_token = self.custome_tokenize_code_line(edge_string, False)
+                edge_rev_sym_token = self.custome_tokenize_code_line(edge_string_rev, False)
             else:
                 edge_sym_token = self.tokenizer.tokenize(edge_string)
+                edge_rev_sym_token = self.tokenizer.tokenize(edge_string_rev)
             sym_slice_code += f"{start_node_sym_code}{edge_string}{end_node_sym_code}\n"
             slice_sym_token_list.append(start_node_sym_code_tokens + [token for token in edge_sym_token if not token.startswith("-")] + end_node_sym_code_tokens)
+            slice_sym_token_list.append(end_node_sym_code_tokens + [token for token in edge_rev_sym_token if not token.startswith("-")] + start_node_sym_code_tokens)
             
 
         self.slice_graph.graph['slice_sym_code'] = sym_slice_code

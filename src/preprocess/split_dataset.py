@@ -1,17 +1,14 @@
 import os
 import json
-import pickle
 
-import networkx as nx
 import logging
 
-from gensim.models import Word2Vec
 from multiprocessing import cpu_count
 from os.path import join, isdir
 from omegaconf import DictConfig, OmegaConf
 from typing import cast
 
-from tqdm import tqdm
+from sklearn.model_selection import train_test_split
 
 from src.common_utils import get_arg_parser
 
@@ -22,7 +19,7 @@ def init_log():
     
     logging.basicConfig(
         handlers=[
-            logging.FileHandler(join(LOG_DIR, "generate_word_embedding_model.log")),
+            logging.FileHandler(join(LOG_DIR, "split_dataset.log")),
             logging.StreamHandler()
         ],
         format='%(asctime)s %(levelname)-8s %(message)s',
@@ -46,7 +43,7 @@ if __name__ == "__main__":
         dataset_root = config.temp_root
     else:
         dataset_root = config.data_folder
-    
+
     all_slices_filepath = join(dataset_root, config.all_slices_filename)
 
     logging.info(f"Loading all generated slices from {all_slices_filepath}...")
@@ -54,20 +51,25 @@ if __name__ == "__main__":
         all_slices = json.load(rfi)
     logging.info(f"Completed. Loaded {len(all_slices)} slices.")
 
-    all_tokens_list = []
-    logging.info(f"Going over {len(all_slices)} files...")
-    for slice_path in tqdm(all_slices):
-        with open(slice_path, "rb") as rbfi:
-            slice_graph: nx.DiGraph = pickle.load(rbfi)
-        all_tokens_list += slice_graph.graph['slice_sym_token']
-    logging.info(f"Completed. Total tokens collected: {len(all_tokens_list)}")
+    train_slices, test_slices = train_test_split(all_slices, test_size=0.2)
+    test_slices, val_slices = train_test_split(test_slices, test_size=0.5)
 
-    model = Word2Vec(sentences=all_tokens_list, min_count=3, vector_size=config.gnn.embed_size,
-                    max_vocab_size=config.dataset.token.vocabulary_size, workers=USE_CPU, sg=1, epochs=10)
-    logging.info(f"Word2Vec model created with {len(model.wv.index_to_key)} unique tokens...")
-    w2v_save_path = join(dataset_root, "w2v.wv")
-    logging.info(f"Saving Word2Vec model to {w2v_save_path}...")
-    model.wv.save(w2v_save_path)
+    train_slices_filepath = join(dataset_root, config.train_slices_filename)
+    logging.info(f"Saving {len(train_slices)} slices to {train_slices_filepath}...")
+    with open(train_slices_filepath, "w") as wfi:
+        json.dump(train_slices, wfi)
+    logging.info("Completed.")
+
+    val_slices_filepath = join(dataset_root, config.val_slices_filename)
+    logging.info(f"Saving {len(val_slices)} slices to {val_slices_filepath}...")
+    with open(val_slices_filepath, "w") as wfi:
+        json.dump(val_slices, wfi)
+    logging.info("Completed.")
+
+    test_slices_filepath = join(dataset_root, config.test_slices_filename)
+    logging.info(f"Saving {len(test_slices)} slices to {test_slices_filepath}...")
+    with open(test_slices_filepath, "w") as wfi:
+        json.dump(test_slices, wfi)
     logging.info(f"Completed.")
     logging.info("=========End session=========")
     logging.shutdown()
