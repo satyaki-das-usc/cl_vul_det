@@ -35,4 +35,5 @@ PYTHONPATH="." python src/tokenize_slices.py &&
 PYTHONPATH="." python src/generate_file_slice_mapping.py &&
 PYTHONPATH="." python src/preprocess/remove_duplicates.py &&
 PYTHONPATH="." python src/preprocess/word_embedding.py &&
-PYTHONPATH="." python src/preprocess/split_dataset.py
+PYTHONPATH="." python src/preprocess/split_dataset.py &&
+PYTHONPATH="." python src/preprocess/generate_instance_perturbation_mapping.py

@@ -29,6 +29,7 @@ bigvul_dataset_filename: processed_data.csv
 unperturbed_files_filename: unperturbed_file_list.json
 sensi_api_filename: sensi_api.json
 sensi_api_map_filename: sensi_api_map.json
+instance_perturbation_map_filename: instance_perturbation_map.json
 pairs_filename: vv_vn_pairs.json
 ignore_list_filename: ignore_list.json
 ignore_list_detection_result_filename: ignore_list_detection_result.json

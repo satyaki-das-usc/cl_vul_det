@@ -48,7 +48,6 @@ if __name__ == "__main__":
         dataset_root = config.data_folder
     
     all_slices_filepath = join(dataset_root, config.all_slices_filename)
-
     logging.info(f"Loading all generated slices from {all_slices_filepath}...")
     with open(all_slices_filepath, "r") as rfi:
         all_slices = json.load(rfi)

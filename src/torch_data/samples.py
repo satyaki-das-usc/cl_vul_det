@@ -3,7 +3,6 @@ from typing import List
 from torch_geometric.data import Data, Batch
 import torch
 
-
 @dataclass
 class SliceGraphSample:
     graph: Data
