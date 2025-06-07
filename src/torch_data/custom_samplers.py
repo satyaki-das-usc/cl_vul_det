@@ -1,4 +1,7 @@
-from os.path import splitext
+import pickle
+import networkx as nx
+
+from os.path import join, splitext
 
 from omegaconf import DictConfig
 from tqdm import tqdm
@@ -14,17 +17,19 @@ encoders = {
 }
 
 class InstanceSampler(Sampler):
-    def __init__(self, dataset, batch_size: int, unperturbed_file_list):
+    def __init__(self, dataset, batch_size: int, config: DictConfig, unperturbed_file_list):
         self.dataset = dataset
         self.batch_size = batch_size
+        self.slice_folder = config.slice_folder
+        self.source_root_folder = config.source_root_folder
         # self.custom_batches = custom_batches  # Predefined list of index batches
         self.custom_batches = self.get_custom_batches(unperturbed_file_list)  # Predefined list of index batches
 
-    def split_sublists(self, list_of_lists, max_size=32):
+    def split_sublists(self, list_of_lists):
         result = []
         for sublist in list_of_lists:
-            if len(sublist) > max_size:
-                result.extend([sublist[i:i + max_size] for i in range(0, len(sublist), max_size)])
+            if len(sublist) > self.batch_size:
+                result.extend([sublist[i:i + self.batch_size] for i in range(0, len(sublist), self.batch_size)])
             else:
                 result.append(sublist)
         return result
@@ -47,9 +52,11 @@ class InstanceSampler(Sampler):
         # logging.info(f"Mapping for io.c completed. Number of instances: {len(instance_index_map[sample_io_c_filepath])}")
 
         print("Creating instance index map...")
-        for idx, slice_graph_sample in tqdm(enumerate(self.dataset), total=len(self.dataset)):
-            slice_graph_path = slice_graph_sample.path
-            cpp_filepath = "/".join(slice_graph_path.split("slice/")[-1].split("/")[:-2])
+        for idx, slice_path in tqdm(enumerate(self.dataset), total=len(self.dataset)):
+            with open(slice_path, "rb") as rbfi:
+                slice_graph: nx.DiGraph = pickle.load(rbfi)
+            src_cpp_path = join(slice_path.partition(self.slice_folder)[0], self.source_root_folder, slice_graph.graph["file_paths"][0])
+            cpp_filepath = src_cpp_path.partition(self.source_root_folder)[-1][1:]
             if cpp_filepath.endswith("io.c"):
                 continue
             if cpp_filepath in unperturbed_file_list:
@@ -57,18 +64,18 @@ class InstanceSampler(Sampler):
                     instance_index_map[cpp_filepath] = []
                 instance_index_map[cpp_filepath].append(idx)
             else:
-                other_train_data[slice_graph_path] = idx
+                other_train_data[slice_path] = idx
         print(f"Number of instances: {len(instance_index_map)}")
         
         print("Assigning other instances to the same batch...")
         for cpp_filepath, indices in tqdm(instance_index_map.items(), total=len(instance_index_map)):
             cpp_filepath_no_ext = splitext(cpp_filepath)[0]
             keys_to_remove = []
-            for slice_graph_path, idx in other_train_data.items():
-                if cpp_filepath_no_ext not in slice_graph_path:
+            for slice_path, idx in other_train_data.items():
+                if cpp_filepath_no_ext not in slice_path:
                     continue
                 indices.append(idx)
-                keys_to_remove.append(slice_graph_path)
+                keys_to_remove.append(slice_path)
             for key in keys_to_remove:
                 del other_train_data[key]
         print(f"Number of instances: {len(instance_index_map)}")
@@ -77,7 +84,7 @@ class InstanceSampler(Sampler):
 
         custom_batch_indices = list(instance_index_map.values())
         
-        return self.split_sublists(custom_batch_indices, self.batch_size)
+        return self.split_sublists(custom_batch_indices)
 
     def __iter__(self):
         # Yield predefined batches (list of lists of indices)
@@ -98,12 +105,14 @@ class VFSampler(Sampler):
         custom_batch_indices = []
         curr_feat_indices = [-1 for i in range(10)]
 
-        for idx, slice_graph_sample in tqdm(enumerate(self.dataset), total=len(self.dataset)):
-            feat_index = curr_feat_indices[slice_graph_sample.feat_code]
+        for idx, slice_path in tqdm(enumerate(self.dataset), total=len(self.dataset)):
+            with open(slice_path, "rb") as rbfi:
+                slice_graph: nx.DiGraph = pickle.load(rbfi)
+            feat_index = curr_feat_indices[slice_graph.graph["feat_code"]]
             if feat_index == -1 or len(custom_batch_indices[feat_index]) >= self.batch_size:
                 custom_batch_indices.append([])
                 feat_index = len(custom_batch_indices) - 1
-                curr_feat_indices[slice_graph_sample.feat_code] = feat_index
+                curr_feat_indices[slice_graph.graph["feat_code"]] = feat_index
             custom_batch_indices[feat_index].append(idx)
         
         return custom_batch_indices
@@ -136,6 +145,6 @@ class SwAVSampler(Sampler):
         # Yield predefined batches (list of lists of indices)
         for batch in self.custom_batches:
             yield batch
-            
+
     def __len__(self):
         return len(self.custom_batches)

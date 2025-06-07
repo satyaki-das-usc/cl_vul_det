@@ -24,6 +24,8 @@ unperturbed_files = list()
 sensi_api_path = ""
 USE_CPU = cpu_count()
 
+feat_name_code_map = dict()
+
 def init_log():
     LOG_DIR = "logs"
     if not isdir(LOG_DIR):
@@ -347,11 +349,12 @@ def write_slices(slices: Dict[str, List[nx.DiGraph]], cpp_path: str) -> Dict[str
 def process_file_parallel(cpp_path, queue: Queue):
     try:
         file_cpg_root = join(csv_path, cpp_path)
-        if cpp_path in unperturbed_files:
-            return []
+        # if cpp_path in unperturbed_files:
+        #     return []
         file_vul_lines = ground_truth[cpp_path] if cpp_path in ground_truth else []
         
         CPG, key_line_map = build_CPG(file_cpg_root, cpp_path)
+        CPG.graph["feat_code"] = feat_name_code_map.get(csv_path.split("/")[-2], -1)
         slices = get_slices(CPG, key_line_map, set(file_vul_lines))
         return write_slices(slices, cpp_path)
     except Exception as e:
@@ -460,6 +463,9 @@ def main(args: argparse.Namespace):
 
         return
 
+    for idx, feat_name in enumerate(config.vul_feats):
+        feat_name_code_map[feat_name] = idx
+    
     VF_pert_root = join(config.data_folder, config.VF_perts_root)
 
     for feat_name in config.vul_feats:
