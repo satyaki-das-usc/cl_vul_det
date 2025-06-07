@@ -20,10 +20,8 @@ class InstanceSampler(Sampler):
     def __init__(self, dataset, batch_size: int, config: DictConfig, unperturbed_file_list):
         self.dataset = dataset
         self.batch_size = batch_size
-        self.slice_folder = config.slice_folder
-        self.source_root_folder = config.source_root_folder
         # self.custom_batches = custom_batches  # Predefined list of index batches
-        self.custom_batches = self.get_custom_batches(unperturbed_file_list)  # Predefined list of index batches
+        self.custom_batches = self.get_custom_batches(unperturbed_file_list, config.source_root_folder, config.slice_folder)  # Predefined list of index batches
 
     def split_sublists(self, list_of_lists):
         result = []
@@ -34,7 +32,7 @@ class InstanceSampler(Sampler):
                 result.append(sublist)
         return result
     
-    def get_custom_batches(self, unperturbed_file_list):
+    def get_custom_batches(self, unperturbed_file_list, source_root_foldername, slice_foldername):
         custom_batch_indices = []
 
         instance_index_map = {}
@@ -55,8 +53,8 @@ class InstanceSampler(Sampler):
         for idx, slice_path in tqdm(enumerate(self.dataset), total=len(self.dataset)):
             with open(slice_path, "rb") as rbfi:
                 slice_graph: nx.DiGraph = pickle.load(rbfi)
-            src_cpp_path = join(slice_path.partition(self.slice_folder)[0], self.source_root_folder, slice_graph.graph["file_paths"][0])
-            cpp_filepath = src_cpp_path.partition(self.source_root_folder)[-1][1:]
+            src_cpp_path = join(slice_path.partition(slice_foldername)[0], source_root_foldername, slice_graph.graph["file_paths"][0])
+            cpp_filepath = src_cpp_path.partition(source_root_foldername)[-1][1:]
             if cpp_filepath.endswith("io.c"):
                 continue
             if cpp_filepath in unperturbed_file_list:
