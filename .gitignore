@@ -4,3 +4,5 @@ temp/data/
 *.json
 *.wv
 *.pyc
+*.zip
+*.tar.gz
