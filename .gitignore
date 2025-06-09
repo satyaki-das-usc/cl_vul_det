@@ -2,4 +2,5 @@ logs/
 data/VF_perts/
 temp/data/
 *.json
-*wv
+*.wv
+*.pyc
