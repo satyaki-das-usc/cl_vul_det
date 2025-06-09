@@ -18,7 +18,7 @@ class SliceDataset(Dataset):
         with open(slices_paths, "r") as rfi:
             slice_path_list = list(json.load(rfi))
         self.__vocab = vocab
-        self.__slices = [SliceGraph(path=slice_path) for slice_path in slice_path_list]
+        self.__slices = [SliceGraph(slice_path) for slice_path in slice_path_list]
         self.__n_samples = len(self.__slices)
     
     def __len__(self) -> int:

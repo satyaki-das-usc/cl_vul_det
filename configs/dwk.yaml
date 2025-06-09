@@ -97,6 +97,7 @@ vul_feats:
   - buff_underread
   - sensi_read
   - sensi_write
+train_sampler_type: instance
 use_custom_tokenizer: true
 tokenizer_name: microsoft/codebert-base
 implemented_preprocessing:
