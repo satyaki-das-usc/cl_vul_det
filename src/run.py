@@ -1,20 +1,32 @@
 import os
 import json
-import pickle
+import torch
 
-import networkx as nx
 import logging
 
-from gensim.models import Word2Vec
 from multiprocessing import cpu_count
-from os.path import join, isdir
+from os.path import join, isdir, basename, exists
 from omegaconf import DictConfig, OmegaConf
 from typing import cast
 
-from tqdm import tqdm
+from commode_utils.callbacks import PrintEpochResultCallback, ModelCheckpointWithUploadCallback
+from pytorch_lightning import LightningModule, LightningDataModule, Trainer
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor, TQDMProgressBar
+from pytorch_lightning.loggers import TensorBoardLogger
 
 from src.common_utils import get_arg_parser
 from src.vocabulary import Vocabulary
+from src.torch_data.custom_samplers import InstanceSampler, VFSampler, SwAVSampler
+from src.torch_data.datamodules import SliceDataModule
+from src.models.vul_det import CLVulDet
+
+sampler = ""
+
+sample_name_map = {
+    "instance": "Instance",
+    "vf": "VF",
+    "swav": "SwAV"
+}
 
 def init_log():
     LOG_DIR = "logs"
@@ -32,12 +44,71 @@ def init_log():
     logging.info("=========New session=========")
     logging.info(f"Logging dir: {LOG_DIR}")
 
+def train(model: LightningModule, data_module: LightningDataModule,
+          config: DictConfig):
+    # Define logger
+    model_name = model.__class__.__name__
+    dataset_name = basename(config.dataset.name)
+    # tensorboard logger
+    tensorlogger = TensorBoardLogger(join("ts_logger", model_name),
+                                     dataset_name)
+    # define model checkpoint callback
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=join(tensorlogger.log_dir, "checkpoints"),
+        monitor="val_loss",
+        filename="{epoch:02d}-{step:02d}-{val_loss:.4f}",
+        every_n_epochs=1,
+        save_top_k=5,
+    )
+    upload_weights = ModelCheckpointWithUploadCallback(
+        join(tensorlogger.log_dir, "checkpoints"))
+
+    early_stopping_callback = EarlyStopping(patience=config.hyper_parameters.patience,
+                                            monitor="val_loss",
+                                            verbose=True,
+                                            mode="min")
+
+    lr_logger = LearningRateMonitor("step")
+    # print_epoch_results = PrintEpochResultCallback(split_symbol="_",
+    #                                                after_test=False)
+
+    gpu = 1 if torch.cuda.is_available() else None
+    trainer = Trainer(
+        max_epochs=config.hyper_parameters.n_epochs,
+        gradient_clip_val=config.hyper_parameters.clip_norm,
+        deterministic=True,
+        val_check_interval=config.hyper_parameters.val_every_step,
+        log_every_n_steps=config.hyper_parameters.log_every_n_steps,
+        logger=[tensorlogger],
+        devices=gpu,
+        accelerator="gpu" if gpu else "cpu",
+        callbacks=[
+            lr_logger, early_stopping_callback, checkpoint_callback, upload_weights, TQDMProgressBar(refresh_rate=config.hyper_parameters.progress_bar_refresh_rate)
+        ],
+    )
+    
+    checkpoint_path = f"{sample_name_map[sampler]}{config.hyper_parameters.resume_from_checkpoint}"
+    if not exists(checkpoint_path):
+        logging.info("No checkpoint found. Starting training from scratch.")
+        trainer.fit(model=model, datamodule=data_module)
+    else:
+        logging.info(f"Checkpoint found at checkpoint_path. Resuming training.")
+        trainer.fit(model=model, datamodule=data_module, ckpt_path=checkpoint_path)
+    trainer.save_checkpoint(checkpoint_path)
+    trainer.test(model=model, datamodule=data_module)
+
 if __name__ == "__main__":
     arg_parser = get_arg_parser()
+    arg_parser.add_argument("-s", "--sampler", type=str, required=True)
     args = arg_parser.parse_args()
-    init_log()
-
     config = cast(DictConfig, OmegaConf.load(args.config))
+
+    if args.sampler not in config.train_sampler_options:
+        raise ValueError(f"Sampler {args.sampler} not in options: {config.train_sampler_options}")
+
+    init_log()
+    sampler = args.sampler
+
     if config.num_workers != -1:
         USE_CPU = min(config.num_workers, cpu_count())
     else:
@@ -51,3 +122,41 @@ if __name__ == "__main__":
     vocab = Vocabulary.from_w2v(join(dataset_root, "w2v.wv"))
     vocab_size = vocab.get_vocab_size()
     pad_idx = vocab.get_pad_id()
+
+    train_slices_filepath = join(dataset_root, config.train_slices_filename)
+    logging.info(f"Loading traning slice paths list from {train_slices_filepath}...")
+    with open(train_slices_filepath, "r") as rfi:
+        train_slices = json.load(rfi)
+    logging.info(f"Completed. Loaded {len(train_slices)} slices.")
+
+    if sampler == "vf":
+        logging.info("Creating VF sampler...")
+        train_sampler = VFSampler(train_slices, config.hyper_parameters.batch_size)
+        logging.info("VF sampler created.")
+    elif sampler == "instance":
+        all_feats_name = ["incorr_calc_buff_size", "buff_access_src_size", "off_by_one", "buff_overread", "double_free", "use_after_free", "buff_underwrite", "buff_underread", "sensi_read", "sensi_write"]
+        unperturbed_file_list = []
+        logging.info("Loading unperturbed file list...")
+        for feat_name in all_feats_name:
+            unperturbed_file_list_path = join(dataset_root, config.VF_perts_root, feat_name,  config.unperturbed_files_filename)
+            with open(unperturbed_file_list_path, "r") as rfi:
+                unperturbed_file_list += json.load(rfi)
+        unperturbed_file_list = list(set(unperturbed_file_list))
+        logging.info(f"Number of unperturbed files: {len(unperturbed_file_list)}")
+        logging.info("Creating Instance sampler...")
+        train_sampler = InstanceSampler(train_slices, config.hyper_parameters.batch_size, config, unperturbed_file_list)
+        logging.info("Instance sampler created.")
+    elif sampler == "swav":
+        logging.info("Creating SwAV sampler...")
+        train_sampler = SwAVSampler(train_slices, config.hyper_parameters.batch_size, vocab, vocab_size, pad_idx)
+        logging.info("SwAV sampler created.")
+    else:
+        train_sampler = None
+
+    logging.info("Loading data module...")
+    data_module = SliceDataModule(config, vocab, train_sampler=train_sampler, use_temp_data=args.use_temp_data)
+    logging.info("Data module loading completed.")
+
+    model = CLVulDet(config, vocab, vocab_size, pad_idx)
+
+    train(model, data_module, config)

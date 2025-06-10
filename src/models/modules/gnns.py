@@ -42,17 +42,23 @@ class GraphConvEncoder(torch.nn.Module):
         # [n nodes; rnn hidden]
         node_embedding = self.__st_embedding(batched_graph.x)
         edge_index = batched_graph.edge_index
-        edge_attr = batched_graph.edge_attr
+        edge_attr = batched_graph.edge_attr.float().mean(dim=1, keepdim=False)
         batch = batched_graph.batch
 
         # Pass edge_attr to TopKPooling
+
+        # node_embedding = F.relu(self.input_GCL(node_embedding, edge_index))
         node_embedding = F.relu(self.input_GCL(node_embedding, edge_index, edge_weight=edge_attr))
+        # node_embedding, edge_index, _, batch, _, _ = self.input_GPL(node_embedding, edge_index, None, batch)
         node_embedding, edge_index, edge_attr, batch, _, _ = self.input_GPL(node_embedding, edge_index, edge_attr, batch)
 
         # [n_SliceGraph; SliceGraph hidden dim]
         out = self.attpool(node_embedding, batch)
         for i in range(self.__config.n_hidden_layers - 1):
+            # node_embedding = F.relu(getattr(self, f"hidden_GCL{i}")(node_embedding, edge_index))
             node_embedding = F.relu(getattr(self, f"hidden_GCL{i}")(node_embedding, edge_index, edge_weight=edge_attr))
+            # node_embedding, edge_index, _, batch, _, _ = getattr(self, f"hidden_GPL{i}")(
+            #     node_embedding, edge_index, None, batch)
             node_embedding, edge_index, edge_attr, batch, _, _ = getattr(self, f"hidden_GPL{i}")(
                 node_embedding, edge_index, edge_attr, batch)
             out += self.attpool(node_embedding, batch)
@@ -95,7 +101,7 @@ class GatedGraphConvEncoder(torch.nn.Module):
         # [n nodes; rnn hidden]
         node_embedding = self.__st_embedding(batched_graph.x)
         edge_index = batched_graph.edge_index
-        edge_attr = batched_graph.edge_attr
+        edge_attr = batched_graph.edge_attr.float()
         batch = batched_graph.batch
         node_embedding = F.relu(self.input_GCL(node_embedding, edge_index, edge_weight=edge_attr))
         node_embedding, edge_index, edge_attr, batch, _, _ = self.input_GPL(node_embedding, edge_index, edge_attr, batch)

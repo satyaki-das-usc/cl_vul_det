@@ -14,10 +14,11 @@ from src.torch_data.datasets import SliceDataset
 from src.torch_data.samples import SliceGraphSample, SliceGraphBatch
 
 class SliceDataModule(LightningDataModule):
-    def __init__(self, config: DictConfig, vocab: Vocabulary, use_temp_data: bool = False):
+    def __init__(self, config: DictConfig, vocab: Vocabulary, train_sampler=None, use_temp_data: bool = False):
         super().__init__()
         self.__vocab = vocab
         self.__config = config
+        self.__train_sampler = train_sampler
 
         if self.__config.num_workers != -1:
             self.__n_workers = min(self.__config.num_workers, cpu_count())
@@ -41,8 +42,7 @@ class SliceDataModule(LightningDataModule):
         train_dataset = self.__create_dataset(train_dataset_path)
         return DataLoader(
             train_dataset,
-            batch_size=self.__config.hyper_parameters.batch_size,
-            shuffle=self.__config.hyper_parameters.shuffle_data,
+            batch_sampler=self.__train_sampler,
             num_workers=self.__n_workers,
             collate_fn=self.collate_wrapper,
             pin_memory=True,
@@ -75,7 +75,8 @@ class SliceDataModule(LightningDataModule):
     def transfer_batch_to_device(
             self,
             batch: SliceGraphBatch,
-            device: Optional[torch.device] = None) -> SliceGraphBatch:
+            device: Optional[torch.device] = None,
+            dataloader_idx=None) -> SliceGraphBatch:
         if device is not None:
             batch.move_to_device(device)
         return batch

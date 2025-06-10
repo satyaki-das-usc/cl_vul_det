@@ -9,6 +9,7 @@ pytorch-lightning
 wordninja
 gensim
 transformers
+tensorboard
 
 # Utilities
 omegaconf
@@ -16,3 +17,4 @@ tqdm
 networkx
 pandas
 scikit-learn
+commode-utils

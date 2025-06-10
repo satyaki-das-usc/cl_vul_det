@@ -72,14 +72,14 @@ hyper_parameters:
   vector_length: 128
   n_epochs: 50
   patience: 10
-  batch_size: 16
-  test_batch_size: 16
+  batch_size: 128
+  test_batch_size: 128
   reload_dataloader: true
   clip_norm: 5
   val_every_step: 1.0
   log_every_n_steps: 50
   progress_bar_refresh_rate: 1
-  resume_from_checkpoint: DevignDeepWukong
+  resume_from_checkpoint: CLVulDet
   shuffle_data: true
   optimizer: Adam
   nesterov: true
@@ -97,7 +97,10 @@ vul_feats:
   - buff_underread
   - sensi_read
   - sensi_write
-train_sampler_type: instance
+train_sampler_options:
+  - instance
+  - vf
+  - swav
 use_custom_tokenizer: true
 tokenizer_name: microsoft/codebert-base
 implemented_preprocessing:

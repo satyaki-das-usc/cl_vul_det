@@ -7,7 +7,6 @@ from pytorch_lightning import LightningModule
 from src.models.modules.gnns import GraphConvEncoder, GatedGraphConvEncoder
 from torch.nn import CosineSimilarity
 from torch.optim import Adam, SGD, Adamax, RMSprop
-from pytorch_lightning.utilities.types import EPOCH_OUTPUT
 import torch.nn.functional as F
 from src.metrics import Statistic
 from torch_geometric.data import Batch
@@ -62,6 +61,9 @@ class CLVulDet(LightningModule):
             ]
         self.__hidden_layers = nn.Sequential(*layers)
         self.__classifier = nn.Linear(hidden_size, config.classifier.n_classes)
+        self.train_outputs = []
+        self.val_outputs = []
+        self.test_outputs = []
 
     def forward(self, batch: Batch) -> torch.Tensor:
         """
@@ -143,7 +145,9 @@ class CLVulDet(LightningModule):
                      batch_metric["train_f1"],
                      prog_bar=True,
                      logger=False)
-        return {"loss": loss, "statistic": statistic}
+        step_output = {"loss": loss, "statistic": statistic}
+        self.train_outputs.append(step_output)
+        return step_output
 
     def validation_step(self, batch: SliceGraphBatch,
                         batch_idx: int) -> torch.Tensor:  # type: ignore
@@ -161,7 +165,9 @@ class CLVulDet(LightningModule):
             )
             batch_metric = statistic.calculate_metrics(group="val")
             result.update(batch_metric)
-        return {"loss": loss, "statistic": statistic}
+        step_output = {"loss": loss, "statistic": statistic}
+        self.val_outputs.append(step_output)
+        return step_output
 
     def test_step(self, batch: SliceGraphBatch,
                   batch_idx: int) -> torch.Tensor:  # type: ignore
@@ -180,10 +186,12 @@ class CLVulDet(LightningModule):
             batch_metric = statistic.calculate_metrics(group="test")
             result.update(batch_metric)
 
-        return {"loss": loss, "statistic": statistic}
+        step_output = {"loss": loss, "statistic": statistic}
+        self.test_outputs.append(step_output)
+        return step_output
 
     # ========== EPOCH END ==========
-    def _prepare_epoch_end_log(self, step_outputs: EPOCH_OUTPUT,
+    def _prepare_epoch_end_log(self, step_outputs: list,
                                step: str) -> Dict[str, torch.Tensor]:
         with torch.no_grad():
             losses = [
@@ -193,18 +201,18 @@ class CLVulDet(LightningModule):
             mean_loss = torch.stack(losses).mean()
         return {f"{step}_loss": mean_loss}
 
-    def _shared_epoch_end(self, step_outputs: EPOCH_OUTPUT, group: str):
+    def _shared_epoch_end(self, step_outputs: list, group: str):
         log = self._prepare_epoch_end_log(step_outputs, group)
         statistic = Statistic.union_statistics(
             [out["statistic"] for out in step_outputs])
         log.update(statistic.calculate_metrics(group))
         self.log_dict(log, on_step=False, on_epoch=True)
 
-    def training_epoch_end(self, training_step_output: EPOCH_OUTPUT):
-        self._shared_epoch_end(training_step_output, "train")
+    def on_train_epoch_end(self):
+        self._shared_epoch_end(self.train_outputs, "train")
 
-    def validation_epoch_end(self, validation_step_output: EPOCH_OUTPUT):
-        self._shared_epoch_end(validation_step_output, "val")
+    def on_validation_epoch_end(self):
+        self._shared_epoch_end(self.val_outputs, "val")
 
-    def test_epoch_end(self, test_step_output: EPOCH_OUTPUT):
-        self._shared_epoch_end(test_step_output, "test")
+    def on_test_epoch_end(self):
+        self._shared_epoch_end(self.test_outputs, "test")
