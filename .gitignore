@@ -2,6 +2,7 @@ logs/
 data/VF_perts/
 temp/data/
 ts_logger/
+plot/
 *.json
 *.wv
 *.pyc

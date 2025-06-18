@@ -2,10 +2,43 @@ import re
 
 from shutil import copytree, rmtree
 import networkx as nx
+from warnings import filterwarnings
 
 from argparse import ArgumentParser
 from os.path import exists, join
 from typing import List, Set, Tuple, Dict
+
+def filter_warnings():
+    # "The dataloader does not have many workers which may be a bottleneck."
+    filterwarnings("ignore",
+                   category=UserWarning,
+                   module="pytorch_lightning.trainer.data_loading",
+                   lineno=102)
+    filterwarnings("ignore",
+                   category=UserWarning,
+                   module="pytorch_lightning.utilities.data",
+                   lineno=41)
+    # "Please also save or load the state of the optimizer when saving or loading the scheduler."
+    filterwarnings("ignore",
+                   category=UserWarning,
+                   module="torch.optim.lr_scheduler",
+                   lineno=216)  # save
+    filterwarnings("ignore",
+                   category=UserWarning,
+                   module="torch.optim.lr_scheduler",
+                   lineno=234)  # load
+    filterwarnings("ignore",
+                   category=DeprecationWarning,
+                   module="pytorch_lightning.metrics.__init__",
+                   lineno=43)
+    filterwarnings("ignore",
+                   category=UserWarning,
+                   module="torch._tensor",
+                   lineno=575)
+    filterwarnings("ignore",
+                   category=UserWarning,
+                   module="src.models.modules.common_layers",
+                   lineno=0)
 
 def dict_to_tuple(single_item_dict):
     if len(single_item_dict) != 1:

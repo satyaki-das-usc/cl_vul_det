@@ -30,6 +30,7 @@ unperturbed_files_filename: unperturbed_file_list.json
 sensi_api_filename: sensi_api.json
 sensi_api_map_filename: sensi_api_map.json
 instance_perturbation_map_filename: instance_perturbation_map.json
+swav_batches_filename: swav_batches.json
 pairs_filename: vv_vn_pairs.json
 ignore_list_filename: ignore_list.json
 ignore_list_detection_result_filename: ignore_list_detection_result.json
@@ -46,6 +47,27 @@ dataset:
     is_wrapped: false
     is_splitted: false
     vocabulary_size: 190000
+min_vul_per_batch: 3
+min_nonvul_per_batch: 1
+swav:
+  sinkhorn:
+    n_iters: 10
+    epsilon: 0.5
+    temperature: 10.0
+  contrastive:
+    temperature: 0.2
+    alpha: 0.25
+    omega: 0.25
+  margin: 0.5
+  alpha: 0.25
+  omega: 0.25
+  vul_beta: 0.007
+  nonvul_beta: 0.005
+  vul_gamma: 0.015
+  nonvul_gamma: 0.01
+  n_epochs: 10
+  use_prototype_loss: true
+  model_save_path: GraphSwAV
 gnn:
   name: gcn
   w2v_path: ${data_folder}/${dataset.name}/w2v.wv
@@ -70,7 +92,7 @@ classifier:
   drop_out: 0.5
 hyper_parameters:
   vector_length: 128
-  n_epochs: 50
+  n_epochs: 5
   patience: 10
   batch_size: 128
   test_batch_size: 128

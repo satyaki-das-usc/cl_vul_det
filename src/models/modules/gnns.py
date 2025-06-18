@@ -3,9 +3,35 @@ import torch
 from torch_geometric.data import Batch
 from torch_geometric.nn import TopKPooling, GCNConv, GINEConv, GATv2Conv, GatedGraphConv, GlobalAttention
 import torch.nn.functional as F
+
 from src.vocabulary import Vocabulary
 from src.models.modules.common_layers import STEncoder
 
+class GraphSwAVModel(torch.nn.Module):
+    def __init__(self, in_channels, edge_dim, hidden_dim=256, num_clusters=1000):
+        super().__init__()
+        self.gnn = GINEConv(
+            nn=torch.nn.Sequential(
+                torch.nn.Linear(in_channels, hidden_dim),
+                torch.nn.ReLU(),
+                torch.nn.Linear(hidden_dim, hidden_dim)
+            ),
+            edge_dim=edge_dim
+        )
+        gate_nn = torch.nn.Sequential(
+            torch.nn.Linear(hidden_dim, 128),
+            torch.nn.ReLU(),
+            torch.nn.Linear(128, 1)
+        )
+        self.pool = GlobalAttention(gate_nn)
+        self.head = torch.nn.Linear(hidden_dim, num_clusters)
+
+    def forward(self, x, edge_index, edge_attr, batch):
+        edge_attr = edge_attr.float()
+        x = self.gnn(x, edge_index, edge_attr)  # uses edge_attr
+        pooled = self.pool(x, batch)  # [num_graphs, hidden_dim]
+        logits = self.head(pooled)
+        return logits, pooled  # [num_graphs, num_clusters]
 
 class GraphConvEncoder(torch.nn.Module):
     """

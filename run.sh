@@ -37,5 +37,14 @@ PYTHONPATH="." python src/preprocess/remove_duplicates.py &&
 PYTHONPATH="." python src/preprocess/word_embedding.py &&
 PYTHONPATH="." python src/preprocess/split_dataset.py &&
 PYTHONPATH="." python src/preprocess/generate_instance_perturbation_mapping.py &&
-PYTHONPATH="." python src/run.py -s instance
+PYTHONPATH="." python src/run.py -s instance &&
+PYTHONPATH="." python src/run.py -s instance --no_cl &&
+PYTHONPATH="." python src/run.py -s vf &&
+PYTHONPATH="." python src/run.py -s vf --no_cl
+
+
+PYTHONPATH="." python src/preprocess/generate_swav_batches.py
+
+PYTHONPATH="." python src/run.py -s instance &&
 PYTHONPATH="." python src/run.py -s vf
+PYTHONPATH="." python src/run.py -s swav
