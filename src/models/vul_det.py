@@ -1,13 +1,14 @@
 from torch import nn
 from omegaconf import DictConfig
 import torch
-from src.torch_data.samples import SliceGraphBatch
 from typing import Dict
 from pytorch_lightning import LightningModule
-from src.models.modules.gnns import GraphConvEncoder, GatedGraphConvEncoder
 from torch.nn import CosineEmbeddingLoss
 from torch.optim import Adam, SGD, Adamax, RMSprop
 import torch.nn.functional as F
+
+from src.torch_data.samples import SliceGraphBatch
+from src.models.modules.gnns import GraphConvEncoder, GatedGraphConvEncoder, GINEConvEncoder
 from src.metrics import Statistic
 from torch_geometric.data import Batch
 from src.vocabulary import Vocabulary
@@ -33,7 +34,8 @@ class CLVulDet(LightningModule):
 
     _encoders = {
         "gcn": GraphConvEncoder,
-        "ggnn": GatedGraphConvEncoder
+        "ggnn": GatedGraphConvEncoder,
+        "gine": GINEConvEncoder
     }
 
     def __init__(self, config: DictConfig, vocab: Vocabulary, vocabulary_size: int,
