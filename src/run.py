@@ -9,16 +9,16 @@ from os.path import join, isdir, basename, exists
 from omegaconf import DictConfig, OmegaConf
 from typing import cast
 
-from commode_utils.callbacks import PrintEpochResultCallback, ModelCheckpointWithUploadCallback
-from pytorch_lightning import LightningModule, LightningDataModule, Trainer
+from commode_utils.callbacks import ModelCheckpointWithUploadCallback
+from pytorch_lightning import LightningModule, LightningDataModule, Trainer, seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor, TQDMProgressBar
 from pytorch_lightning.loggers import TensorBoardLogger
 
-from src.common_utils import get_arg_parser
+from src.common_utils import get_arg_parser, filter_warnings
 from src.vocabulary import Vocabulary
 from src.torch_data.custom_samplers import InstanceSampler, VFSampler, SwAVSampler
 from src.torch_data.datamodules import SliceDataModule
-from src.models.vul_det import CLVulDet
+from src.models.vul_det import CLVulDet, NoCLVulDet
 
 sampler = ""
 
@@ -45,7 +45,7 @@ def init_log():
     logging.info(f"Logging dir: {LOG_DIR}")
 
 def train(model: LightningModule, data_module: LightningDataModule,
-          config: DictConfig):
+          config: DictConfig, no_cl: bool = False):
     # Define logger
     model_name = model.__class__.__name__
     dataset_name = basename(config.dataset.name)
@@ -87,21 +87,25 @@ def train(model: LightningModule, data_module: LightningDataModule,
         ],
     )
     
-    checkpoint_path = f"{sample_name_map[sampler]}{config.hyper_parameters.resume_from_checkpoint}"
+    checkpoint_path = f"{sample_name_map[sampler]}{'No' if no_cl else ''}{config.hyper_parameters.resume_from_checkpoint}"
     if not exists(checkpoint_path):
         logging.info("No checkpoint found. Starting training from scratch.")
         trainer.fit(model=model, datamodule=data_module)
     else:
-        logging.info(f"Checkpoint found at checkpoint_path. Resuming training.")
+        logging.info(f"Checkpoint found at {checkpoint_path}. Resuming training.")
         trainer.fit(model=model, datamodule=data_module, ckpt_path=checkpoint_path)
     trainer.save_checkpoint(checkpoint_path)
     trainer.test(model=model, datamodule=data_module)
 
 if __name__ == "__main__":
+    filter_warnings()
     arg_parser = get_arg_parser()
     arg_parser.add_argument("-s", "--sampler", type=str, required=True)
+    arg_parser.add_argument("--no_cl", action='store_true', help="Use contrastive learning")
     args = arg_parser.parse_args()
+
     config = cast(DictConfig, OmegaConf.load(args.config))
+    seed_everything(config.seed, workers=True)
 
     if args.sampler not in config.train_sampler_options:
         raise ValueError(f"Sampler {args.sampler} not in options: {config.train_sampler_options}")
@@ -124,7 +128,7 @@ if __name__ == "__main__":
     pad_idx = vocab.get_pad_id()
 
     train_slices_filepath = join(dataset_root, config.train_slices_filename)
-    logging.info(f"Loading traning slice paths list from {train_slices_filepath}...")
+    logging.info(f"Loading training slice paths list from {train_slices_filepath}...")
     with open(train_slices_filepath, "r") as rfi:
         train_slices = json.load(rfi)
     logging.info(f"Completed. Loaded {len(train_slices)} slices.")
@@ -148,7 +152,8 @@ if __name__ == "__main__":
         logging.info("Instance sampler created.")
     elif sampler == "swav":
         logging.info("Creating SwAV sampler...")
-        train_sampler = SwAVSampler(train_slices, config.hyper_parameters.batch_size, vocab, vocab_size, pad_idx)
+        swav_batches_filepath = join(dataset_root, config.swav_batches_filename)
+        train_sampler = SwAVSampler(swav_batches_filepath)
         logging.info("SwAV sampler created.")
     else:
         train_sampler = None
@@ -157,6 +162,9 @@ if __name__ == "__main__":
     data_module = SliceDataModule(config, vocab, train_sampler=train_sampler, use_temp_data=args.use_temp_data)
     logging.info("Data module loading completed.")
 
-    model = CLVulDet(config, vocab, vocab_size, pad_idx)
+    if args.no_cl:
+        model = NoCLVulDet(config, vocab, vocab_size, pad_idx)
+    else:
+        model = CLVulDet(config, vocab, vocab_size, pad_idx)
 
-    train(model, data_module, config)
+    train(model, data_module, config, args.no_cl)

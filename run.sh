@@ -44,6 +44,7 @@ PYTHONPATH="." python src/run.py -s vf --no_cl
 
 
 PYTHONPATH="." python src/preprocess/generate_swav_batches.py
+PYTHONPATH="." python src/preprocess/split_large_batches.py
 
 PYTHONPATH="." python src/run.py -s instance &&
 PYTHONPATH="." python src/run.py -s vf

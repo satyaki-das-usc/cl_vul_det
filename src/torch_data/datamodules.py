@@ -40,9 +40,19 @@ class SliceDataModule(LightningDataModule):
     def train_dataloader(self) -> DataLoader:
         train_dataset_path = join(self.__dataset_root, self.__config.train_slices_filename)
         train_dataset = self.__create_dataset(train_dataset_path)
+        
+        if self.__train_sampler:
+            return DataLoader(
+                train_dataset,
+                batch_sampler=self.__train_sampler,
+                num_workers=self.__n_workers,
+                collate_fn=self.collate_wrapper,
+                pin_memory=True,
+            )
         return DataLoader(
             train_dataset,
-            batch_sampler=self.__train_sampler,
+            batch_size=self.__config.hyper_parameters.batch_size,
+            shuffle=False,
             num_workers=self.__n_workers,
             collate_fn=self.collate_wrapper,
             pin_memory=True,

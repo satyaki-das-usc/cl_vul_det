@@ -91,6 +91,7 @@ classifier:
   n_classes: 2
   drop_out: 0.5
 hyper_parameters:
+  temperature: 0.2
   vector_length: 128
   n_epochs: 5
   patience: 10

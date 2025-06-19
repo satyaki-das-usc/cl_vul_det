@@ -1,4 +1,5 @@
 import pickle
+import json
 import networkx as nx
 
 from os.path import join, splitext
@@ -7,14 +8,6 @@ from omegaconf import DictConfig
 from tqdm import tqdm
 
 from torch.utils.data import Sampler
-
-from src.models.modules.gnns import GraphConvEncoder, GatedGraphConvEncoder
-from src.vocabulary import Vocabulary
-
-encoders = {
-    "gcn": GraphConvEncoder,
-    "ggnn": GatedGraphConvEncoder
-}
 
 class InstanceSampler(Sampler):
     def __init__(self, dataset, batch_size: int, config: DictConfig, unperturbed_file_list):
@@ -80,6 +73,11 @@ class InstanceSampler(Sampler):
         
         instance_index_map["other"] = list(other_train_data.values())
 
+        # with open("instance_index_map.json", "w") as wfi:
+        #     import json
+        #     json.dump(instance_index_map, wfi, indent=2)
+        #     exit(0)
+
         custom_batch_indices = list(instance_index_map.values())
         
         return self.split_sublists(custom_batch_indices)
@@ -124,20 +122,13 @@ class VFSampler(Sampler):
         return len(self.custom_batches)
 
 class SwAVSampler(Sampler):
-    def __init__(self, dataset, batch_size: int, config: DictConfig, vocab: Vocabulary, vocabulary_size: int,
-                 pad_idx: int):
-        self.dataset = dataset
-        self.__graph_encoder = encoders[config.gnn.name](config.gnn, vocab, vocabulary_size,
-                                                               pad_idx)
-        self.batch_size = batch_size
+    def __init__(self, swav_batches_filepath):
+        self.swav_batches_filepath = swav_batches_filepath
+        # self.__graph_encoder = encoders[config.gnn.name](config.gnn, vocab, vocabulary_size,
+        #                                                        pad_idx)
+        with open(swav_batches_filepath, "r") as rfi:
+            self.custom_batches = json.load(rfi)  # Predefined list of index batches
         # self.custom_batches = custom_batches  # Predefined list of index batches
-        self.custom_batches = self.get_custom_batches()  # Predefined list of index batches
-    
-    def get_custom_batches(self):
-        custom_batch_indices = []
-        
-        
-        return custom_batch_indices
 
     def __iter__(self):
         # Yield predefined batches (list of lists of indices)
