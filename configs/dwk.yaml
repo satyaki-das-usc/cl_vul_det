@@ -40,6 +40,7 @@ save_every_epoch: 1
 val_every_epoch: 1
 log_every_epoch: 10
 progress_bar_refresh_rate: 1
+exclude_NNs: false
 dataset:
   name: SARD
   token:
@@ -107,6 +108,7 @@ hyper_parameters:
   shuffle_data: true
   optimizer: Adam
   nesterov: true
+  use_warmup_lr: true
   learning_rate: 0.002
   weight_decay: 0
   decay_gamma: 0.95

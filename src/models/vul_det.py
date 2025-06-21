@@ -95,9 +95,28 @@ class CLVulDet(LightningModule):
                 "params": p
             } for p in parameters],
             self.__config.hyper_parameters.learning_rate)
-        scheduler = torch.optim.lr_scheduler.LambdaLR(
-            optimizer,
-            lr_lambda=lambda epoch: self.__config.hyper_parameters.decay_gamma
+        if self.__config.hyper_parameters.use_warmup_lr:
+            warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+                optimizer,
+                start_factor=0.1,
+                total_iters=self.__config.hyper_parameters.lr_warmup_epochs
+            )
+
+            cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=self.trainer.max_epochs - self.__config.hyper_parameters.lr_warmup_epochs,
+                eta_min=1e-6
+            )
+
+            scheduler = torch.optim.lr_scheduler.SequentialLR(
+                optimizer,
+                schedulers=[warmup_scheduler, cosine_scheduler],
+                milestones=[self.__config.hyper_parameters.lr_warmup_epochs]
+            )
+        else:
+            scheduler = torch.optim.lr_scheduler.LambdaLR(
+                optimizer,
+                lr_lambda=lambda epoch: self.__config.hyper_parameters.decay_gamma
                                     ** epoch)
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
@@ -109,19 +128,26 @@ class CLVulDet(LightningModule):
             embeddings = F.normalize(embeddings, p=2, dim=1)
         n = embeddings.size(0)
         idx_i, idx_j = torch.triu_indices(n, n, offset=1, device=labels.device)
-        valid_mask = (labels[idx_i] + labels[idx_j]) > 0
-        idx_i_valid = idx_i[valid_mask]
-        idx_j_valid = idx_j[valid_mask]
-        emb_i = embeddings[idx_i_valid]
-        emb_j = embeddings[idx_j_valid]
+        if self.__config.exclude_NNs:
+            valid_mask = (labels[idx_i] + labels[idx_j]) > 0
+            idx_i_valid = idx_i[valid_mask]
+            idx_j_valid = idx_j[valid_mask]
+            emb_i = embeddings[idx_i_valid]
+            emb_j = embeddings[idx_j_valid]
+        else:
+            emb_i = embeddings[idx_i]
+            emb_j = embeddings[idx_j]
         
         if self.__config.distance_metric == "euclidean":
             # Prepare pairs for contrastive loss using Euclidean distance
-            target = torch.where(
-                (labels[idx_i_valid] == 1) & (labels[idx_j_valid] == 1),
-                torch.tensor(1.0),
-                torch.tensor(-1.0)
-            )
+            if self.__config.exclude_NNs:
+                target = torch.where(
+                    (labels[idx_i_valid] == 1) & (labels[idx_j_valid] == 1),
+                    torch.tensor(1.0),
+                    torch.tensor(-1.0)
+                )
+            else:
+                target = torch.where(labels[idx_i] == labels[idx_j], 1.0, 0.0).to(embeddings.device)
             euclidean_distance = torch.norm(emb_i - emb_j, p=2, dim=1)
             margin = 1.0
             if emb_i.size(0) > 0:
@@ -133,11 +159,14 @@ class CLVulDet(LightningModule):
                 contrastive_loss = torch.tensor(0.0, device=embeddings.device, requires_grad=True)
         elif self.__config.distance_metric == "cosine":
             # Prepare pairs for CosineEmbeddingLoss
-            target = torch.where(
-                (labels[idx_i_valid] == 1) & (labels[idx_j_valid] == 1),
-                torch.tensor(1.0),
-                torch.tensor(-1.0)
-            )
+            if self.__config.exclude_NNs:
+                target = torch.where(
+                    (labels[idx_i_valid] == 1) & (labels[idx_j_valid] == 1),
+                    torch.tensor(1.0),
+                    torch.tensor(-1.0)
+                )
+            else:
+                target = torch.where(labels[idx_i] == labels[idx_j], 1.0, -1.0).to(embeddings.device)
             cosine_loss_fn = CosineEmbeddingLoss(margin=0.0)
             if emb_i.size(0) > 0:
                 contrastive_loss = cosine_loss_fn(emb_i, emb_j, target)
