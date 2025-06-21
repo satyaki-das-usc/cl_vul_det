@@ -108,7 +108,7 @@ class CLVulDet(LightningModule):
         if self.__config.distance_metric == "cosine":
             embeddings = F.normalize(embeddings, p=2, dim=1)
         n = embeddings.size(0)
-        idx_i, idx_j = torch.triu_indices(n, n, offset=1)
+        idx_i, idx_j = torch.triu_indices(n, n, offset=1, device=labels.device)
         valid_mask = (labels[idx_i] + labels[idx_j]) > 0
         idx_i_valid = idx_i[valid_mask]
         idx_j_valid = idx_j[valid_mask]
