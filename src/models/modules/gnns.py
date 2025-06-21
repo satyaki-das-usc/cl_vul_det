@@ -8,32 +8,6 @@ import torch.nn.functional as F
 from src.vocabulary import Vocabulary
 from src.models.modules.common_layers import STEncoder
 
-class GraphSwAVModel(torch.nn.Module):
-    def __init__(self, in_channels, edge_dim, hidden_dim=256, num_clusters=1000):
-        super().__init__()
-        self.gnn = GINEConv(
-            nn=torch.nn.Sequential(
-                torch.nn.Linear(in_channels, hidden_dim),
-                torch.nn.ReLU(),
-                torch.nn.Linear(hidden_dim, hidden_dim)
-            ),
-            edge_dim=edge_dim
-        )
-        gate_nn = torch.nn.Sequential(
-            torch.nn.Linear(hidden_dim, 128),
-            torch.nn.ReLU(),
-            torch.nn.Linear(128, 1)
-        )
-        self.pool = GlobalAttention(gate_nn)
-        self.head = torch.nn.Linear(hidden_dim, num_clusters)
-
-    def forward(self, x, edge_index, edge_attr, batch):
-        edge_attr = edge_attr.float()
-        x = self.gnn(x, edge_index, edge_attr)  # uses edge_attr
-        pooled = self.pool(x, batch)  # [num_graphs, hidden_dim]
-        logits = self.head(pooled)
-        return logits, pooled  # [num_graphs, num_clusters]
-
 class GraphConvEncoder(torch.nn.Module):
     """
 
@@ -142,12 +116,6 @@ class GatedGraphConvEncoder(torch.nn.Module):
         return out
 
 class GINEConvEncoder(torch.nn.Module):
-    """
-
-    Kipf and Welling: Semi-Supervised Classification with Graph Convolutional Networks (ICLR 2017)
-    (https://arxiv.org/pdf/1609.02907.pdf)
-
-    """
 
     def __init__(self, config: DictConfig, vocab: Vocabulary,
                  vocabulary_size: int,
@@ -229,3 +197,24 @@ class GINEConvEncoder(torch.nn.Module):
 
         # [n_SliceGraph; SliceGraph hidden dim]
         return out
+
+class GraphSwAVModel(torch.nn.Module):
+
+    _encoders = {
+        "gcn": GraphConvEncoder,
+        "ggnn": GatedGraphConvEncoder,
+        "gine": GINEConvEncoder
+    }
+
+    def __init__(self, config: DictConfig, vocab: Vocabulary, vocabulary_size: int,
+                 pad_idx: int, num_clusters=1000):
+        super().__init__()
+        hidden_dim = config.gnn.hidden_size
+        self.__graph_encoder = self._encoders[config.gnn.name](config.gnn, vocab, vocabulary_size,
+                                                               pad_idx)
+        self.head = torch.nn.Linear(hidden_dim, num_clusters)
+
+    def forward(self, batch: Batch):
+        graph_embeddings = self.__graph_encoder(batch)  # [num_graphs, hidden_dim]
+        logits = self.head(graph_embeddings)
+        return logits, graph_embeddings  # [num_graphs, num_clusters]

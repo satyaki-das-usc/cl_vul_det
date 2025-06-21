@@ -222,7 +222,7 @@ if __name__ == "__main__":
     in_channels = sample_list[0].graph.x.shape[1]
     edge_dim = sample_list[0].graph.edge_attr.shape[1]
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = GraphSwAVModel(in_channels=in_channels, edge_dim=edge_dim, hidden_dim=config.gnn.hidden_size, num_clusters=num_clusters).to(device)
+    model = GraphSwAVModel(config, vocab, vocab_size, pad_idx, num_clusters=num_clusters).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     for epoch in range(config.swav.n_epochs):
         logging.info(f"Epoch {epoch + 1}")

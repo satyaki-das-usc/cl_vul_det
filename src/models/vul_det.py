@@ -109,12 +109,19 @@ class CLVulDet(LightningModule):
             embeddings = F.normalize(embeddings, p=2, dim=1)
         n = embeddings.size(0)
         idx_i, idx_j = torch.triu_indices(n, n, offset=1)
-        emb_i = embeddings[idx_i]
-        emb_j = embeddings[idx_j]
+        valid_mask = (labels[idx_i] + labels[idx_j]) > 0
+        idx_i_valid = idx_i[valid_mask]
+        idx_j_valid = idx_j[valid_mask]
+        emb_i = embeddings[idx_i_valid]
+        emb_j = embeddings[idx_j_valid]
         
         if self.__config.distance_metric == "euclidean":
             # Prepare pairs for contrastive loss using Euclidean distance
-            target = torch.where(labels[idx_i] == labels[idx_j], 1.0, 0.0).to(embeddings.device)
+            target = torch.where(
+                (labels[idx_i_valid] == 1) & (labels[idx_j_valid] == 1),
+                torch.tensor(1.0),
+                torch.tensor(-1.0)
+            )
             euclidean_distance = torch.norm(emb_i - emb_j, p=2, dim=1)
             margin = 1.0
             if emb_i.size(0) > 0:
@@ -126,7 +133,11 @@ class CLVulDet(LightningModule):
                 contrastive_loss = torch.tensor(0.0, device=embeddings.device, requires_grad=True)
         elif self.__config.distance_metric == "cosine":
             # Prepare pairs for CosineEmbeddingLoss
-            target = torch.where(labels[idx_i] == labels[idx_j], 1.0, -1.0).to(embeddings.device)
+            target = torch.where(
+                (labels[idx_i_valid] == 1) & (labels[idx_j_valid] == 1),
+                torch.tensor(1.0),
+                torch.tensor(-1.0)
+            )
             cosine_loss_fn = CosineEmbeddingLoss(margin=0.0)
             if emb_i.size(0) > 0:
                 contrastive_loss = cosine_loss_fn(emb_i, emb_j, target)
