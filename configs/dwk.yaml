@@ -8,6 +8,7 @@ temp_root: temp/data
 pert_CPG_root: pert_CPG
 repo_root: SySeVRCopy
 data_folder: data
+model_save_dir: models
 source_root_folder: source-code
 csv_folder: csv
 slice_folder: slice
@@ -108,7 +109,8 @@ hyper_parameters:
   shuffle_data: true
   optimizer: Adam
   nesterov: true
-  use_warmup_lr: true
+  use_warmup_lr: false
+  contrastive_warmup_epochs: 10
   learning_rate: 0.002
   weight_decay: 0
   decay_gamma: 0.95

@@ -215,6 +215,6 @@ class GraphSwAVModel(torch.nn.Module):
         self.head = torch.nn.Linear(hidden_dim, num_clusters)
 
     def forward(self, batch: Batch):
-        graph_embeddings = self.__graph_encoder(batch)  # [num_graphs, hidden_dim]
-        logits = self.head(graph_embeddings)
-        return logits, graph_embeddings  # [num_graphs, num_clusters]
+        graph_activations = self.__graph_encoder(batch)  # [num_graphs, hidden_dim]
+        logits = self.head(graph_activations)
+        return logits, graph_activations  # [num_graphs, num_clusters]

@@ -42,6 +42,7 @@ class CLVulDet(LightningModule):
                  pad_idx: int):
         super().__init__()
         self.save_hyperparameters()
+        self.best_val_f1 = 0.0
         self.__config = config
         hidden_size = config.classifier.hidden_size
         self.__graph_encoder = self._encoders[config.gnn.name](config.gnn, vocab, vocabulary_size,
@@ -66,6 +67,9 @@ class CLVulDet(LightningModule):
         self.train_outputs = []
         self.val_outputs = []
         self.test_outputs = []
+    
+    def set_checkpoint_path(self, checkpoint_path: str):
+        self.checkpoint_path = checkpoint_path
 
     def forward(self, batch: Batch) -> torch.Tensor:
         """
@@ -76,11 +80,11 @@ class CLVulDet(LightningModule):
         Returns: classifier results: [n_method; n_classes]
         """
         # [n_SliceGraph, hidden size]
-        graph_embeddings = self.__graph_encoder(batch)
-        embeddings = self.__hidden_layers(graph_embeddings)
-        logits = self.__classifier(embeddings)
+        graph_activations = self.__graph_encoder(batch)
+        activations = self.__hidden_layers(graph_activations)
+        logits = self.__classifier(activations)
         # [n_SliceGraph; n_classes]
-        return logits, embeddings, graph_embeddings
+        return logits, activations, graph_activations
 
     def _get_optimizer(self, name: str) -> torch.nn.Module:
         if name in self._optimizers:
@@ -123,20 +127,20 @@ class CLVulDet(LightningModule):
     def _log_training_step(self, results: Dict):
         self.log_dict(results, on_step=True, on_epoch=False)
 
-    def get_contrastive_loss(self, embeddings, labels: torch.Tensor) -> torch.Tensor:
+    def get_contrastive_loss(self, activations, labels: torch.Tensor) -> torch.Tensor:
         if self.__config.distance_metric == "cosine":
-            embeddings = F.normalize(embeddings, p=2, dim=1)
-        n = embeddings.size(0)
+            activations = F.normalize(activations, p=2, dim=1)
+        n = activations.size(0)
         idx_i, idx_j = torch.triu_indices(n, n, offset=1, device=labels.device)
         if self.__config.exclude_NNs:
             valid_mask = (labels[idx_i] + labels[idx_j]) > 0
             idx_i_valid = idx_i[valid_mask]
             idx_j_valid = idx_j[valid_mask]
-            emb_i = embeddings[idx_i_valid]
-            emb_j = embeddings[idx_j_valid]
+            act_i = activations[idx_i_valid]
+            act_j = activations[idx_j_valid]
         else:
-            emb_i = embeddings[idx_i]
-            emb_j = embeddings[idx_j]
+            act_i = activations[idx_i]
+            act_j = activations[idx_j]
         
         if self.__config.distance_metric == "euclidean":
             # Prepare pairs for contrastive loss using Euclidean distance
@@ -147,16 +151,16 @@ class CLVulDet(LightningModule):
                     torch.tensor(-1.0)
                 )
             else:
-                target = torch.where(labels[idx_i] == labels[idx_j], 1.0, 0.0).to(embeddings.device)
-            euclidean_distance = torch.norm(emb_i - emb_j, p=2, dim=1)
+                target = torch.where(labels[idx_i] == labels[idx_j], 1.0, 0.0).to(activations.device)
+            euclidean_distance = torch.norm(act_i - act_j, p=2, dim=1)
             margin = 1.0
-            if emb_i.size(0) > 0:
+            if act_i.size(0) > 0:
                 contrastive_loss = (
                     target * euclidean_distance.pow(2) +
                     (1 - target) * F.relu(margin - euclidean_distance).pow(2)
                 ).mean()
             else:
-                contrastive_loss = torch.tensor(0.0, device=embeddings.device, requires_grad=True)
+                contrastive_loss = torch.tensor(0.0, device=activations.device, requires_grad=True)
         elif self.__config.distance_metric == "cosine":
             # Prepare pairs for CosineEmbeddingLoss
             if self.__config.exclude_NNs:
@@ -166,12 +170,12 @@ class CLVulDet(LightningModule):
                     torch.tensor(-1.0)
                 )
             else:
-                target = torch.where(labels[idx_i] == labels[idx_j], 1.0, -1.0).to(embeddings.device)
+                target = torch.where(labels[idx_i] == labels[idx_j], 1.0, -1.0).to(activations.device)
             cosine_loss_fn = CosineEmbeddingLoss(margin=0.0)
-            if emb_i.size(0) > 0:
-                contrastive_loss = cosine_loss_fn(emb_i, emb_j, target)
+            if act_i.size(0) > 0:
+                contrastive_loss = cosine_loss_fn(act_i, act_j, target)
             else:
-                contrastive_loss = torch.tensor(0.0, device=embeddings.device, requires_grad=True)
+                contrastive_loss = torch.tensor(0.0, device=activations.device, requires_grad=True)
         else:
             raise ValueError(f"Unsupported distance metric: {self.__config.distance_metric}")
         return contrastive_loss
@@ -179,12 +183,16 @@ class CLVulDet(LightningModule):
     def training_step(self, batch: SliceGraphBatch,
                       batch_idx: int) -> torch.Tensor:  # type: ignore
         # [n_SliceGraph; n_classes]
-        logits, embeddings, graph_embeddings = self(batch.graphs)
+        logits, activations, graph_activations = self(batch.graphs)
         # loss = F.cross_entropy(logits, batch.labels)
         
-        contrastive_loss = self.get_contrastive_loss(embeddings, batch.labels)
+        contrastive_loss = self.get_contrastive_loss(activations, batch.labels)
         ce_loss = F.cross_entropy(logits, batch.labels)
-        loss = ce_loss + contrastive_loss
+
+        if self.current_epoch < self.__config.hyper_parameters.contrastive_warmup_epochs:
+            loss = ce_loss
+        else:
+            loss = ce_loss + contrastive_loss
 
         result: Dict = {"train_loss": loss}
         with torch.no_grad():
@@ -217,7 +225,7 @@ class CLVulDet(LightningModule):
     def validation_step(self, batch: SliceGraphBatch,
                         batch_idx: int) -> torch.Tensor:  # type: ignore
         # [n_SliceGraph; n_classes]
-        logits, embeddings, graph_embeddings = self(batch.graphs)
+        logits, activations, graph_activations = self(batch.graphs)
         loss = F.cross_entropy(logits, batch.labels)
 
         result: Dict = {"val_loss": loss}
@@ -237,7 +245,7 @@ class CLVulDet(LightningModule):
     def test_step(self, batch: SliceGraphBatch,
                   batch_idx: int) -> torch.Tensor:  # type: ignore
         # [n_SliceGraph; n_classes]
-        logits, embeddings, graph_embeddings = self(batch.graphs)
+        logits, activations, graph_activations = self(batch.graphs)
         loss = F.cross_entropy(logits, batch.labels)
 
         result: Dict = {"test_loss", loss}
@@ -270,7 +278,14 @@ class CLVulDet(LightningModule):
         log = self._prepare_epoch_end_log(step_outputs, group)
         statistic = Statistic.union_statistics(
             [out["statistic"] for out in step_outputs])
-        log.update(statistic.calculate_metrics(group))
+        batch_metric = statistic.calculate_metrics(group)
+        if group == "val":
+            current_f1 = batch_metric["val_f1"]
+            if current_f1 > self.best_val_f1:
+                self.best_val_f1 = current_f1
+                self.trainer.save_checkpoint(self.checkpoint_path)
+                self.log("best_val_f1", self.best_val_f1, prog_bar=True)
+        log.update(batch_metric)
         self.log_dict(log, on_step=False, on_epoch=True)
 
     def on_train_epoch_end(self):
@@ -308,6 +323,7 @@ class NoCLVulDet(LightningModule):
                  pad_idx: int):
         super().__init__()
         self.save_hyperparameters()
+        self.best_val_f1 = 0.0
         self.__config = config
         hidden_size = config.classifier.hidden_size
         self.__graph_encoder = self._encoders[config.gnn.name](config.gnn, vocab, vocabulary_size,
@@ -333,6 +349,9 @@ class NoCLVulDet(LightningModule):
         self.val_outputs = []
         self.test_outputs = []
 
+    def set_checkpoint_path(self, checkpoint_path: str):
+        self.checkpoint_path = checkpoint_path
+    
     def forward(self, batch: Batch) -> torch.Tensor:
         """
 
@@ -342,16 +361,10 @@ class NoCLVulDet(LightningModule):
         Returns: classifier results: [n_method; n_classes]
         """
         # [n_SliceGraph, hidden size]
-        self.graph_embeddings = self.__graph_encoder(batch)
-        self.embeddings = self.__hidden_layers(self.graph_embeddings)
+        self.graph_activations = self.__graph_encoder(batch)
+        self.activations = self.__hidden_layers(self.graph_activations)
         # [n_SliceGraph; n_classes]
-        return self.__classifier(self.embeddings)
-    
-    def get_graph_embeddings(self):
-        return self.graph_embeddings
-    
-    def get_embeddings(self):
-        return self.embeddings
+        return self.__classifier(self.activations)
 
     def _get_optimizer(self, name: str) -> torch.nn.Module:
         if name in self._optimizers:
@@ -456,7 +469,14 @@ class NoCLVulDet(LightningModule):
         log = self._prepare_epoch_end_log(step_outputs, group)
         statistic = Statistic.union_statistics(
             [out["statistic"] for out in step_outputs])
-        log.update(statistic.calculate_metrics(group))
+        batch_metric = statistic.calculate_metrics(group)
+        if group == "val":
+            current_f1 = batch_metric["val_f1"]
+            if current_f1 > self.best_val_f1:
+                self.best_val_f1 = current_f1
+                self.trainer.save_checkpoint(self.checkpoint_path)
+                self.log("best_val_f1", self.best_val_f1, prog_bar=True)
+        log.update(batch_metric)
         self.log_dict(log, on_step=False, on_epoch=True)
 
     def on_train_epoch_end(self):

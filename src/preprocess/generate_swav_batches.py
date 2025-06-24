@@ -65,9 +65,9 @@ def sinkhorn_knopp(Q, n_iters=3, epsilon=0.2):
     Q *= B
     return Q.T
 
-def soft_intra_cluster_dissimilarity(embeddings, soft_assignments):
-    embeddings = F.normalize(embeddings, dim=1)
-    sim_matrix = embeddings @ embeddings.T
+def soft_intra_cluster_dissimilarity(activations, soft_assignments):
+    activations = F.normalize(activations, dim=1)
+    sim_matrix = activations @ activations.T
     dissim_matrix = 1 - sim_matrix
 
     co_assign_probs = soft_assignments @ soft_assignments.T 
@@ -101,15 +101,15 @@ def is_adequate_batch(labels, min_vul=3, min_nonvul=1):
     
     return vul_count >= min_vul and nonvul_count >= min_nonvul
 
-def compute_cluster_centroids(embeddings, cluster_assignments, num_clusters):
-    D = embeddings.size(1)
-    centroids = torch.zeros(num_clusters, D, device=embeddings.device)
-    counts = torch.zeros(num_clusters, device=embeddings.device)
+def compute_cluster_centroids(activations, cluster_assignments, num_clusters):
+    D = activations.size(1)
+    centroids = torch.zeros(num_clusters, D, device=activations.device)
+    counts = torch.zeros(num_clusters, device=activations.device)
 
     for i in range(num_clusters):
         mask = (cluster_assignments == i)
         if mask.any():
-            centroids[i] = embeddings[mask].mean(dim=0)
+            centroids[i] = activations[mask].mean(dim=0)
             counts[i] = mask.sum()
 
     invalid_mask = (counts == 0 )
@@ -237,7 +237,7 @@ if __name__ == "__main__":
             labels = batched_graph.labels.to(device)
             batched_graph = batched_graph.graphs.to(device)
 
-            outs, embeddings = model(batched_graph.x, batched_graph.edge_index, batched_graph.edge_attr, batched_graph.batch)
+            outs, activations = model(batched_graph.x, batched_graph.edge_index, batched_graph.edge_attr, batched_graph.batch)
         
             with torch.no_grad():
                 logits = outs.detach() / config.swav.sinkhorn.temperature
@@ -268,7 +268,7 @@ if __name__ == "__main__":
             vul_outs = outs[vul_mask]
             nonvul_outs = outs[nonvul_mask]
 
-            intra_cluster_dissim_loss = soft_intra_cluster_dissimilarity(embeddings, sinkhorn_targets)
+            intra_cluster_dissim_loss = soft_intra_cluster_dissimilarity(activations, sinkhorn_targets)
             
             if config.swav.use_prototype_loss:
                 proto_loss = prototype_dissimilarity_loss(F.normalize(model.head.weight, dim=1), margin=config.swav.margin)
@@ -316,7 +316,7 @@ if __name__ == "__main__":
     model.eval()
 
     all_outs = torch.empty((0, num_clusters), device=device)
-    all_embeddings = torch.empty((0, config.gnn.hidden_size), device=device)
+    all_activations = torch.empty((0, config.gnn.hidden_size), device=device)
     all_labels = torch.empty((0,), device=device)
     with torch.no_grad():
         for i in progress_bar:
@@ -325,9 +325,9 @@ if __name__ == "__main__":
             all_labels = torch.cat((all_labels, labels.detach()), dim=0)
             batched_graph = batched_graph.graphs.to(device)
 
-            outs, embeddings = model(batched_graph.x, batched_graph.edge_index, batched_graph.edge_attr, batched_graph.batch)
+            outs, activations = model(batched_graph.x, batched_graph.edge_index, batched_graph.edge_attr, batched_graph.batch)
             all_outs = torch.cat((all_outs, outs.detach()), dim=0)
-            all_embeddings = torch.cat((all_embeddings, embeddings.detach()), dim=0)
+            all_activations = torch.cat((all_activations, activations.detach()), dim=0)
         
         all_logits = all_outs.detach() / config.swav.sinkhorn.temperature
         all_logits = all_logits - all_logits.max(dim=1, keepdim=True)[0]
@@ -384,12 +384,12 @@ if __name__ == "__main__":
             selected_indices.append(chosen)
 
         selected_indices = torch.cat(selected_indices)
-        selected_embeddings = all_embeddings[selected_indices]
+        selected_activations = all_activations[selected_indices]
         selected_assignments = cluster_assignments[selected_indices]
         selected_labels = all_labels[selected_indices]
 
         tsne = TSNE(n_components=2, perplexity=30, learning_rate=200, init='pca', random_state=42)
-        reduced = tsne.fit_transform(selected_embeddings.cpu().numpy())
+        reduced = tsne.fit_transform(selected_activations.cpu().numpy())
 
         # Plot
         plt.figure(figsize=(10, 8))
@@ -425,7 +425,7 @@ if __name__ == "__main__":
         merged_clusters = get_prototype_merged_clusters(prototypes, inadequate_clusters, all_labels, cluster_to_indices, config)
     elif args.merge_type == "centroid":
         logging.info("Using centroid-based merging...")
-        centroids, invalid_mask = compute_cluster_centroids(all_embeddings, cluster_assignments, num_clusters)
+        centroids, invalid_mask = compute_cluster_centroids(all_activations, cluster_assignments, num_clusters)
         merged_clusters = get_centroid_merged_clusters(centroids, invalid_mask, inadequate_clusters, all_labels, cluster_to_indices, config)
     else:
         raise ValueError(f"Unknown merge type: {args.merge_type}")

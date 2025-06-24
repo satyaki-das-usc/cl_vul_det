@@ -28,6 +28,16 @@ sample_name_map = {
     "swav": "SwAV"
 }
 
+gnn_name_map = {
+    "gcn": "GCN",
+    "gin": "GIN",
+    "gine": "GINE",
+    "ggnn": "GGNN",
+    "gatv2": "GATv2",
+    "gated": "Gated",
+    "st": "ST"
+}
+
 def init_log():
     LOG_DIR = "logs"
     if not isdir(LOG_DIR):
@@ -48,9 +58,14 @@ def train(model: LightningModule, data_module: LightningDataModule,
           config: DictConfig, no_cl: bool = False):
     # Define logger
     model_name = model.__class__.__name__
+    gnn_name = gnn_name_map[config.gnn.name]
+    sampler_name = sample_name_map[sampler]
+    nn_text = "ExcludeNN" if config.exclude_NNs else "IncludeNN"
+    lr_warmup_text = "NoLRWarmup" if config.hyper_parameters.use_warmup_lr else "LRWarmup"
+    cl_warmup_text = "NoCLWarmup" if config.hyper_parameters.contrastive_warmup_epochs > 0 else "CLWarmup"
     dataset_name = basename(config.dataset.name)
     # tensorboard logger
-    tensorlogger = TensorBoardLogger(join("ts_logger", model_name),
+    tensorlogger = TensorBoardLogger(join("ts_logger", model_name, gnn_name, sampler_name, nn_text, lr_warmup_text, cl_warmup_text),
                                      dataset_name)
     # define model checkpoint callback
     checkpoint_callback = ModelCheckpoint(
@@ -87,14 +102,18 @@ def train(model: LightningModule, data_module: LightningDataModule,
         ],
     )
     
-    checkpoint_path = f"{sample_name_map[sampler]}{'No' if no_cl else ''}{config.hyper_parameters.resume_from_checkpoint}"
+    checkpoint_dir = join(config.model_save_dir, gnn_name, sampler_name, nn_text, lr_warmup_text, cl_warmup_text)
+    if not exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir, exist_ok=True)
+    checkpoint_path = join(checkpoint_dir, f"{model_name}.ckpt")
+    model.set_checkpoint_path(checkpoint_path)
     if not exists(checkpoint_path):
-        logging.info("No checkpoint found. Starting training from scratch.")
+        logging.info(f"Checkpoint at {checkpoint_path} not found. Starting training from scratch.")
         trainer.fit(model=model, datamodule=data_module)
     else:
         logging.info(f"Checkpoint found at {checkpoint_path}. Resuming training.")
         trainer.fit(model=model, datamodule=data_module, ckpt_path=checkpoint_path)
-    trainer.save_checkpoint(checkpoint_path)
+    # trainer.save_checkpoint(checkpoint_path)
     trainer.test(model=model, datamodule=data_module)
 
 if __name__ == "__main__":
