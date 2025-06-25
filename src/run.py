@@ -61,8 +61,8 @@ def train(model: LightningModule, data_module: LightningDataModule,
     gnn_name = gnn_name_map[config.gnn.name]
     sampler_name = sample_name_map[sampler]
     nn_text = "ExcludeNN" if config.exclude_NNs else "IncludeNN"
-    lr_warmup_text = "NoLRWarmup" if config.hyper_parameters.use_warmup_lr else "LRWarmup"
-    cl_warmup_text = "NoCLWarmup" if config.hyper_parameters.contrastive_warmup_epochs > 0 else "CLWarmup"
+    lr_warmup_text = "LRWarmup" if config.hyper_parameters.use_warmup_lr else "NoLRWarmup"
+    cl_warmup_text = "CLWarmup" if config.hyper_parameters.contrastive_warmup_epochs > 0 else "NoCLWarmup"
     dataset_name = basename(config.dataset.name)
     # tensorboard logger
     tensorlogger = TensorBoardLogger(join("ts_logger", model_name, gnn_name, sampler_name, nn_text, lr_warmup_text, cl_warmup_text),
@@ -121,10 +121,21 @@ if __name__ == "__main__":
     arg_parser = get_arg_parser()
     arg_parser.add_argument("-s", "--sampler", type=str, required=True)
     arg_parser.add_argument("--no_cl", action='store_true', help="Use contrastive learning")
+    arg_parser.add_argument("--exclude_NNs", action='store_true', help="Exclude NN pairs during contrastive learning")
+    arg_parser.add_argument("--use_lr_warmup", action='store_true', help="Exclude Learning Rate warmup")
+    arg_parser.add_argument("--no_cl_warmup", action='store_true', help="Use contrastive learning warmup")
+
     args = arg_parser.parse_args()
 
     config = cast(DictConfig, OmegaConf.load(args.config))
     seed_everything(config.seed, workers=True)
+
+    if args.exclude_NNs:
+        config.exclude_NNs = True
+    if args.use_lr_warmup:
+        config.hyper_parameters.use_warmup_lr = True
+    if args.no_cl_warmup:
+        config.hyper_parameters.contrastive_warmup_epochs = 0
 
     if args.sampler not in config.train_sampler_options:
         raise ValueError(f"Sampler {args.sampler} not in options: {config.train_sampler_options}")

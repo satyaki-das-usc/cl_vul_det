@@ -37,15 +37,22 @@ PYTHONPATH="." python src/preprocess/remove_duplicates.py &&
 PYTHONPATH="." python src/preprocess/word_embedding.py &&
 PYTHONPATH="." python src/preprocess/split_dataset.py &&
 PYTHONPATH="." python src/preprocess/generate_instance_perturbation_mapping.py &&
+PYTHONPATH="." python src/preprocess/generate_swav_batches.py &&
+PYTHONPATH="." python src/preprocess/split_large_batches.py
+
+
+PYTHONPATH="." python src/run.py -s instance && PYTHONPATH="." python src/run.py -s vf && PYTHONPATH="." python src/run.py -s swav
+
+PYTHONPATH="." python src/run.py -s instance --exclude_NNs && PYTHONPATH="." python src/run.py -s vf --exclude_NNs && PYTHONPATH="." python src/run.py -s swav --exclude_NNs
+
+PYTHONPATH="." python src/run.py -s instance --no_cl_warmup && PYTHONPATH="." python src/run.py -s vf --no_cl_warmup && PYTHONPATH="." python src/run.py -s swav --no_cl_warmup
+
+PYTHONPATH="." python src/run.py -s instance --exclude_NNs --no_cl_warmup && PYTHONPATH="." python src/run.py -s vf --exclude_NNs --no_cl_warmup && PYTHONPATH="." python src/run.py -s swav --exclude_NNs --no_cl_warmup
+
+
 PYTHONPATH="." python src/run.py -s instance &&
 PYTHONPATH="." python src/run.py -s instance --no_cl &&
 PYTHONPATH="." python src/run.py -s vf &&
 PYTHONPATH="." python src/run.py -s vf --no_cl
 
 
-PYTHONPATH="." python src/preprocess/generate_swav_batches.py
-PYTHONPATH="." python src/preprocess/split_large_batches.py
-
-PYTHONPATH="." python src/run.py -s instance &&
-PYTHONPATH="." python src/run.py -s vf &&
-PYTHONPATH="." python src/run.py -s swav

@@ -96,7 +96,7 @@ classifier:
 hyper_parameters:
   temperature: 0.2
   vector_length: 128
-  n_epochs: 50
+  n_epochs: 100
   patience: 10
   batch_size: 128
   test_batch_size: 128

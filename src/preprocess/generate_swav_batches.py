@@ -237,7 +237,7 @@ if __name__ == "__main__":
             labels = batched_graph.labels.to(device)
             batched_graph = batched_graph.graphs.to(device)
 
-            outs, activations = model(batched_graph.x, batched_graph.edge_index, batched_graph.edge_attr, batched_graph.batch)
+            outs, activations = model(batched_graph)
         
             with torch.no_grad():
                 logits = outs.detach() / config.swav.sinkhorn.temperature
@@ -325,7 +325,7 @@ if __name__ == "__main__":
             all_labels = torch.cat((all_labels, labels.detach()), dim=0)
             batched_graph = batched_graph.graphs.to(device)
 
-            outs, activations = model(batched_graph.x, batched_graph.edge_index, batched_graph.edge_attr, batched_graph.batch)
+            outs, activations = model(batched_graph)
             all_outs = torch.cat((all_outs, outs.detach()), dim=0)
             all_activations = torch.cat((all_activations, activations.detach()), dim=0)
         
