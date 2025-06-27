@@ -101,6 +101,8 @@ def get_arg_parser():
                             type=str)
     arg_parser.add_argument("--use_temp_data", action='store_true',
                             help="Whether to use temporary data folder")
+    arg_parser.add_argument("--use_nvd", action='store_true',
+                            help="Whether to use NVD data")
 
     return arg_parser
 

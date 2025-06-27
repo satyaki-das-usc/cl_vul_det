@@ -29,6 +29,10 @@ PYTHONPATH="." python src/preprocess/remove_duplicates.py --use_temp_data &&
 PYTHONPATH="." python src/preprocess/word_embedding.py --use_temp_data &&
 PYTHONPATH="." python src/preprocess/split_dataset.py --use_temp_data
 
+PYTHONPATH="." python src/generate_vf_slices.py --use_nvd --only_clear_slices &&
+PYTHONPATH="." python src/generate_vf_slices.py --use_nvd &&
+PYTHONPATH="." python src/tokenize_slices.py --use_nvd &&
+
 PYTHONPATH="." python src/generate_vf_slices.py --only_clear_slices &&
 PYTHONPATH="." python src/generate_vf_slices.py &&
 PYTHONPATH="." python src/tokenize_slices.py &&
@@ -54,5 +58,9 @@ PYTHONPATH="." python src/run.py -s instance &&
 PYTHONPATH="." python src/run.py -s instance --no_cl &&
 PYTHONPATH="." python src/run.py -s vf &&
 PYTHONPATH="." python src/run.py -s vf --no_cl
+
+
+PYTHONPATH="." python src/evaluate_all_model_configurations.py
+PYTHONPATH="." python src/generate_nvd_ground_truth.py
 
 

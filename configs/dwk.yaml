@@ -9,6 +9,7 @@ pert_CPG_root: pert_CPG
 repo_root: SySeVRCopy
 data_folder: data
 model_save_dir: models
+diff_folder: diff
 source_root_folder: source-code
 csv_folder: csv
 slice_folder: slice
@@ -43,7 +44,7 @@ log_every_epoch: 10
 progress_bar_refresh_rate: 1
 exclude_NNs: false
 dataset:
-  name: SARD
+  name: NVD
   token:
     max_parts: 16
     is_wrapped: false

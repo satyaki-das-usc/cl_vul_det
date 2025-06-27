@@ -396,7 +396,7 @@ def process_dataset(dataset_root: str, config: DictConfig, only_clear_slices: bo
         logging.info(f"Reading cpp filepaths from {cpp_paths_filepath}...")
         with open(cpp_paths_filepath, "r") as rfi:
             cpp_paths = json.load(rfi)
-        logging.info(f"Completed. Retrieved {len(cpp_paths_filepath)} cpp filepaths.")
+        logging.info(f"Completed. Retrieved {len(cpp_paths)} cpp filepaths.")
     
     unperturbed_files_filepath = join(dataset_root, config.unperturbed_files_filename)
     if not exists(unperturbed_files_filepath):
@@ -454,6 +454,21 @@ def main(args: argparse.Namespace):
         all_slice_list += process_dataset(config.temp_root, config, args.only_clear_slices)
 
         all_slices_filepath = join(config.temp_root, config.all_slices_filename)
+        logging.info(f"Writing {len(all_slice_list)} slices to {all_slices_filepath}...")
+        with open(all_slices_filepath, "w") as wfi:
+            json.dump(all_slice_list, wfi, indent=2)
+        logging.info(f"Completed.")
+        logging.info("=========End session=========")
+        logging.shutdown()
+
+        return
+    
+    if args.use_nvd:
+        dataset_root = join(config.data_folder, config.dataset.name)
+        logging.info(f"Processing NVD data from {dataset_root}...")
+        all_slice_list += process_dataset(dataset_root, config, args.only_clear_slices)
+
+        all_slices_filepath = join(dataset_root, config.all_slices_filename)
         logging.info(f"Writing {len(all_slice_list)} slices to {all_slices_filepath}...")
         with open(all_slices_filepath, "w") as wfi:
             json.dump(all_slice_list, wfi, indent=2)
