@@ -9,6 +9,15 @@ from os.path import join
 from omegaconf import DictConfig
 from transformers import RobertaTokenizer
 
+def is_partial_for_loop(node_sym_code: str) -> bool:
+    """
+    Check if the node_sym_code is a partial for loop.
+    A partial for loop is one that has the form "for (init; condition; step)".
+    """
+    part1, part2 = [part.strip() for part in node_sym_code.strip("(").rpartition(")")[0].split(";")]
+    
+    return len(part1.strip()) > 0 and len(part2.strip()) > 0
+
 class SliceTokenizer:
     # def __init__(self, delimiter=' '):
     #     self.delimiter = delimiter
@@ -96,7 +105,7 @@ class SliceTokenizer:
 
             return
         elif node_sym_code.startswith("while"):
-            print(f"NotImplementedError: \"While loop\"")
+            print(f"Node sym code: <<<{node_sym_code}>>>")
             return
         elif node_sym_code.startswith("do"):
             print(f"NotImplementedError: \"Do-While loop\"")
@@ -104,7 +113,7 @@ class SliceTokenizer:
         elif node_sym_code.startswith("switch"):
             print(f"NotImplementedError: \"Switch condition\"")
             return
-        elif node_sym_code.startswith("if"):
+        elif node_sym_code.startswith("if") or node_sym_code.startswith("else if"):
             keyword_free_sym_code = node_sym_code.partition("(")[-1]
             condition = "("
             parenthesis_count = 1
@@ -139,6 +148,25 @@ class SliceTokenizer:
             self.slice_graph.add_edges_from(new_edges)
             
             return
+        elif is_partial_for_loop(node_sym_code):
+            condition, step = node_sym_code.strip("(").rpartition(")")[0].split(";")
+            new_node = f"{start}_step"
+            self.slice_graph.nodes[start]["sym_code"] = condition
+            self.slice_graph.nodes[start]["code_sym_token"] = self.custome_tokenize_code_line(condition, False)
+
+            self.slice_graph.add_node(new_node)
+            self.slice_graph.nodes[new_node]["sym_code"] = step
+            self.slice_graph.nodes[new_node]["code_sym_token"] = self.custome_tokenize_code_line(step, False)
+            edges_to_remove.append((start, end))
+            new_edges.append((start, new_node, {"label": "CONTROLS"}))
+            
+            for start, end, edge_data in self.slice_graph.out_edges(start, data=True):
+                if edge_data["label"] == "CONTROLS":
+                    continue
+                edges_to_remove.append((start, end))
+                new_edges.append((new_node, end, {"label": edge_data["label"], "var": edge_data["var"].strip()}))
+            self.slice_graph.remove_edges_from(edges_to_remove)
+            self.slice_graph.add_edges_from(new_edges)
         else:
             print(f"NotImplementedError: Unknown \"self control edge\" type: {node_sym_code}")
             return

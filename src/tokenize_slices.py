@@ -83,6 +83,8 @@ if __name__ == "__main__":
 
     if args.use_temp_data:
         dataset_root = config.temp_root
+    elif args.use_nvd:
+        dataset_root = join(config.data_folder, config.dataset.name)
     else:
         dataset_root = config.data_folder
     all_slices_filepath = join(dataset_root, config.all_slices_filename)
