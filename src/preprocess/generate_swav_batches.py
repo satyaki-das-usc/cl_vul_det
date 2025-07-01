@@ -146,7 +146,7 @@ def get_centroid_merged_clusters(centroids, invalid_mask, inadequate_clusters, a
 
 def get_prototype_merged_clusters(prototypes, inadequate_clusters, all_labels, cluster_to_indices, config):
     with torch.no_grad():
-        prototypes = F.normalize(model.head.weight, dim=1)
+        prototypes = F.normalize(model.cluster_head.weight, dim=1)
         similarity_matrix = prototypes @ prototypes.T
     
     merged_clusters = dict()
@@ -271,7 +271,7 @@ if __name__ == "__main__":
             intra_cluster_dissim_loss = soft_intra_cluster_dissimilarity(activations, sinkhorn_targets)
             
             if config.swav.use_prototype_loss:
-                proto_loss = prototype_dissimilarity_loss(F.normalize(model.head.weight, dim=1), margin=config.swav.margin)
+                proto_loss = prototype_dissimilarity_loss(F.normalize(model.cluster_head.weight, dim=1), margin=config.swav.margin)
                 alpha = 0.25
                 beta = 0.24
                 gamma = 0.27
@@ -417,7 +417,7 @@ if __name__ == "__main__":
     logging.info(f"{len(inadequate_clusters)} inadequate clusters found. Merging them with adequate clusters...")
 
     with torch.no_grad():
-        prototypes = F.normalize(model.head.weight, dim=1)
+        prototypes = F.normalize(model.cluster_head.weight, dim=1)
         similarity_matrix = prototypes @ prototypes.T
     
     if args.merge_type == "prototype":

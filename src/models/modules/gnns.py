@@ -212,9 +212,9 @@ class GraphSwAVModel(torch.nn.Module):
         hidden_dim = config.gnn.hidden_size
         self.__graph_encoder = self._encoders[config.gnn.name](config.gnn, vocab, vocabulary_size,
                                                                pad_idx)
-        self.head = torch.nn.Linear(hidden_dim, num_clusters)
+        self.cluster_head = torch.nn.Linear(hidden_dim, num_clusters)
 
     def forward(self, batch: Batch):
         graph_activations = self.__graph_encoder(batch)  # [num_graphs, hidden_dim]
-        logits = self.head(graph_activations)
+        logits = self.cluster_head(graph_activations)
         return logits, graph_activations  # [num_graphs, num_clusters]
