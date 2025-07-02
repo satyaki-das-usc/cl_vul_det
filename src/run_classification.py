@@ -45,7 +45,7 @@ def init_log():
     
     logging.basicConfig(
         handlers=[
-            logging.FileHandler(join(LOG_DIR, "run.log")),
+            logging.FileHandler(join(LOG_DIR, "run_classification.log")),
             logging.StreamHandler()
         ],
         format='%(asctime)s %(levelname)-8s %(message)s',
