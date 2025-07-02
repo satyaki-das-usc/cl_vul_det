@@ -45,7 +45,7 @@ class CLVulRep(LightningModule):
     def __init__(self, config: DictConfig, vocab: Vocabulary, vocabulary_size: int,
                  pad_idx: int, backbone: GraphSwAVModel = None):
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore=["backbone"])
         self.__config = config
         hidden_size = config.classifier.hidden_size
         self.trainable_parameters = []
@@ -250,7 +250,7 @@ class CLVulDet(LightningModule):
 
     def __init__(self, config: DictConfig, backbone: CLVulRep):
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore=["backbone"])
         self.best_val_f1 = 0.0
         self.__config = config
         hidden_size = config.classifier.hidden_size

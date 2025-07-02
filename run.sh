@@ -44,6 +44,10 @@ PYTHONPATH="." python src/preprocess/generate_instance_perturbation_mapping.py &
 PYTHONPATH="." python src/preprocess/generate_swav_batches.py &&
 PYTHONPATH="." python src/preprocess/split_large_batches.py
 
+screen -S instance_representation -d -m bash -c "PYTHONPATH='.' python src/run_representation.py -s instance"
+screen -S vf_representation -d -m bash -c "PYTHONPATH='.' python src/run_representation.py -s vf"
+screen -S swav_representation -d -m bash -c "PYTHONPATH='.' python src/run_representation.py -s swav"
+
 
 PYTHONPATH="." python src/run_classification.py -s instance && PYTHONPATH="." python src/run_classification.py -s vf && PYTHONPATH="." python src/run_classification.py -s swav
 
