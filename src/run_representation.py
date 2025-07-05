@@ -164,7 +164,7 @@ if __name__ == "__main__":
         unperturbed_file_list = []
         logging.info("Loading unperturbed file list...")
         for feat_name in all_feats_name:
-            unperturbed_file_list_path = join(dataset_root, config.VF_perts_root, feat_name,  config.unperturbed_files_filename)
+            unperturbed_file_list_path = join(dataset_root, config.VF_perts_root, feat_name, config.unperturbed_files_filename)
             with open(unperturbed_file_list_path, "r") as rfi:
                 unperturbed_file_list += json.load(rfi)
         unperturbed_file_list = list(set(unperturbed_file_list))
