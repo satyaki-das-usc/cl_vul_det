@@ -55,7 +55,7 @@ def init_log():
     logging.info(f"Logging dir: {LOG_DIR}")
 
 def train(model: LightningModule, data_module: LightningDataModule,
-          config: DictConfig, no_cl: bool = False):
+          config: DictConfig):
     # Define logger
     model_name = model.__class__.__name__
     gnn_name = gnn_name_map[config.gnn.name]
@@ -65,8 +65,9 @@ def train(model: LightningModule, data_module: LightningDataModule,
     cl_warmup_text = "CLWarmup" if config.hyper_parameters.contrastive_warmup_epochs > 0 else "NoCLWarmup"
     dataset_name = basename(config.dataset.name)
     # tensorboard logger
-    tensorlogger = TensorBoardLogger(join("ts_logger", model_name, gnn_name, sampler_name, nn_text, lr_warmup_text, cl_warmup_text),
-                                     dataset_name)
+    # tensorlogger = TensorBoardLogger(join("ts_logger", model_name, gnn_name, sampler_name, nn_text, lr_warmup_text, cl_warmup_text),
+    #                                  dataset_name)
+    tensorlogger = TensorBoardLogger(join("ts_logger", "classification", model_name, gnn_name, sampler_name, nn_text, cl_warmup_text), dataset_name)
     # define model checkpoint callback
     checkpoint_callback = ModelCheckpoint(
         dirpath=join(tensorlogger.log_dir, "checkpoints"),
@@ -102,7 +103,8 @@ def train(model: LightningModule, data_module: LightningDataModule,
         ],
     )
     
-    checkpoint_dir = join(config.model_save_dir, gnn_name, sampler_name, nn_text, lr_warmup_text, cl_warmup_text)
+    # checkpoint_dir = join(config.model_save_dir, gnn_name, sampler_name, nn_text, lr_warmup_text, cl_warmup_text)
+    checkpoint_dir = join(config.model_save_dir, "classification", gnn_name, sampler_name, nn_text, cl_warmup_text)
     if not exists(checkpoint_dir):
         os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_path = join(checkpoint_dir, f"{model_name}.ckpt")
