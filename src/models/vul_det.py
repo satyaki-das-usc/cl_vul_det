@@ -203,7 +203,7 @@ class CLVulDet(LightningModule):
         if self.current_epoch < self.__config.hyper_parameters.contrastive_warmup_epochs:
             loss = ce_loss
         else:
-            loss = ce_loss + contrastive_loss
+            loss = ce_loss + self.__config.hyper_parameters.contrastive_learning_weight_factor * contrastive_loss
 
         result: Dict = {"train_loss": loss}
         with torch.no_grad():

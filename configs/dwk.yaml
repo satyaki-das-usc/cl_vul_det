@@ -112,6 +112,7 @@ hyper_parameters:
   nesterov: true
   use_warmup_lr: false
   contrastive_warmup_epochs: 10
+  contrastive_learning_weight_factor: 0.3
   learning_rate: 0.002
   weight_decay: 0
   decay_gamma: 0.95
