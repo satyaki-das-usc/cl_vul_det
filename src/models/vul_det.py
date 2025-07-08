@@ -159,7 +159,7 @@ class CLVulDet(LightningModule):
                 target = torch.where(
                     (labels[idx_i_valid] == 1) & (labels[idx_j_valid] == 1),
                     torch.tensor(1.0),
-                    torch.tensor(-1.0)
+                    torch.tensor(0.0)
                 )
             else:
                 target = torch.where(labels[idx_i] == labels[idx_j], 1.0, 0.0).to(activations.device)

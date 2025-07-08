@@ -199,4 +199,4 @@ if __name__ == "__main__":
     else:
         model = CLVulDet(config, vocab, vocab_size, pad_idx)
 
-    train(model, data_module, config, args.no_cl)
+    train(model, data_module, config)
