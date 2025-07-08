@@ -52,6 +52,10 @@ screen -S instance_representation -d -m bash -c "PYTHONPATH='.' python src/run_r
 screen -S vf_representation -d -m bash -c "PYTHONPATH='.' python src/run_representation.py -s vf"
 screen -S swav_representation -d -m bash -c "PYTHONPATH='.' python src/run_representation.py -s swav"
 
+screen -S instance -d -m bash -c "PYTHONPATH='.' python src/run_classification.py -s instance"
+screen -S vf -d -m bash -c "PYTHONPATH='.' python src/run_classification.py -s vf"
+screen -S swav -d -m bash -c "PYTHONPATH='.' python src/run_classification.py -s swav"
+
 screen -S instance_no_cl -d -m bash -c "PYTHONPATH='.' python src/run_classification.py -s instance --no_cl"
 screen -S vf_no_cl -d -m bash -c "PYTHONPATH='.' python src/run_classification.py -s vf --no_cl"
 screen -S swav_no_cl -d -m bash -c "PYTHONPATH='.' python src/run_classification.py -s swav --no_cl"
