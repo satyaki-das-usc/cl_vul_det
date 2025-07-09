@@ -16,7 +16,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 
 from src.common_utils import get_arg_parser, filter_warnings
 from src.vocabulary import Vocabulary
-from src.torch_data.custom_samplers import InstanceSampler, VFSampler, SwAVSampler
+from src.torch_data.custom_samplers import BalancedSampler
 from src.torch_data.datamodules import SliceDataModule
 from src.models.vul_det import CLVulDet, NoCLVulDet
 
@@ -67,7 +67,7 @@ def train(model: LightningModule, data_module: LightningDataModule,
     # tensorboard logger
     # tensorlogger = TensorBoardLogger(join("ts_logger", model_name, gnn_name, sampler_name, nn_text, lr_warmup_text, cl_warmup_text),
     #                                  dataset_name)
-    tensorlogger = TensorBoardLogger(join("ts_logger", "classification", model_name, gnn_name, sampler_name, nn_text, cl_warmup_text), dataset_name)
+    tensorlogger = TensorBoardLogger(join("ts_logger", "balanced_cl_classification", model_name, gnn_name, sampler_name, nn_text, cl_warmup_text), dataset_name)
     # define model checkpoint callback
     checkpoint_callback = ModelCheckpoint(
         dirpath=join(tensorlogger.log_dir, "checkpoints"),
@@ -104,7 +104,7 @@ def train(model: LightningModule, data_module: LightningDataModule,
     )
     
     # checkpoint_dir = join(config.model_save_dir, gnn_name, sampler_name, nn_text, lr_warmup_text, cl_warmup_text)
-    checkpoint_dir = join(config.model_save_dir, "classification", gnn_name, sampler_name, nn_text, cl_warmup_text)
+    checkpoint_dir = join(config.model_save_dir, "balanced_cl_classification", gnn_name, sampler_name, nn_text, cl_warmup_text)
     if not exists(checkpoint_dir):
         os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_path = join(checkpoint_dir, f"{model_name}.ckpt")
@@ -165,30 +165,10 @@ if __name__ == "__main__":
         train_slices = json.load(rfi)
     logging.info(f"Completed. Loaded {len(train_slices)} slices.")
 
-    if sampler == "vf":
-        logging.info("Creating VF sampler...")
-        train_sampler = VFSampler(train_slices, config.hyper_parameters.batch_size)
-        logging.info("VF sampler created.")
-    elif sampler == "instance":
-        all_feats_name = ["incorr_calc_buff_size", "buff_access_src_size", "off_by_one", "buff_overread", "double_free", "use_after_free", "buff_underwrite", "buff_underread", "sensi_read", "sensi_write"]
-        unperturbed_file_list = []
-        logging.info("Loading unperturbed file list...")
-        for feat_name in all_feats_name:
-            unperturbed_file_list_path = join(dataset_root, config.VF_perts_root, feat_name,  config.unperturbed_files_filename)
-            with open(unperturbed_file_list_path, "r") as rfi:
-                unperturbed_file_list += json.load(rfi)
-        unperturbed_file_list = list(set(unperturbed_file_list))
-        logging.info(f"Number of unperturbed files: {len(unperturbed_file_list)}")
-        logging.info("Creating Instance sampler...")
-        train_sampler = InstanceSampler(train_slices, config.hyper_parameters.batch_size, config, unperturbed_file_list)
-        logging.info("Instance sampler created.")
-    elif sampler == "swav":
-        logging.info("Creating SwAV sampler...")
-        swav_batches_filepath = join(dataset_root, config.swav_batches_filename)
-        train_sampler = SwAVSampler(swav_batches_filepath)
-        logging.info("SwAV sampler created.")
-    else:
-        train_sampler = None
+    logging.info(f"Creating {sample_name_map[sampler]} sampler...")
+    balanced_batches_filepath = join(dataset_root, f"{sampler}_balanced_batches.json")
+    train_sampler = BalancedSampler(balanced_batches_filepath)
+    logging.info(f"{sample_name_map[sampler]} sampler created.")
 
     logging.info("Loading data module...")
     data_module = SliceDataModule(config, vocab, train_sampler=train_sampler, use_temp_data=args.use_temp_data)
