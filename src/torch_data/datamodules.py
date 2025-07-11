@@ -52,7 +52,7 @@ class SliceDataModule(LightningDataModule):
         return DataLoader(
             train_dataset,
             batch_size=self.__config.hyper_parameters.batch_size,
-            shuffle=False,
+            shuffle=True,
             num_workers=self.__n_workers,
             collate_fn=self.collate_wrapper,
             pin_memory=True,
@@ -64,7 +64,7 @@ class SliceDataModule(LightningDataModule):
         return DataLoader(
             val_dataset,
             batch_size=self.__config.hyper_parameters.batch_size,
-            shuffle=False,
+            shuffle=True,
             num_workers=self.__n_workers,
             collate_fn=self.collate_wrapper,
             pin_memory=True,
@@ -76,7 +76,7 @@ class SliceDataModule(LightningDataModule):
         return DataLoader(
             test_dataset,
             batch_size=self.__config.hyper_parameters.batch_size,
-            shuffle=False,
+            shuffle=True,
             num_workers=self.__n_workers,
             collate_fn=self.collate_wrapper,
             pin_memory=True,
