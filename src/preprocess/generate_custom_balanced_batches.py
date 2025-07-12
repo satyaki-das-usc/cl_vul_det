@@ -314,6 +314,7 @@ if __name__ == "__main__":
     filter_warnings()
     arg_parser = get_arg_parser()
     arg_parser.add_argument("-s", "--sampler", type=str, required=True)
+    arg_parser.add_argument("--do_balancing", action='store_true', help="Generate balanced batches")
     args = arg_parser.parse_args()
 
     config = cast(DictConfig, OmegaConf.load(args.config))
@@ -366,12 +367,15 @@ if __name__ == "__main__":
         tuple_list = get_swav_tuple_list(swav_batches)
         logging.info(f"SwAV tuple list created. Total tuples: {len(tuple_list)}")
     
-    logging.info(f"Creating balanced batches from {len(tuple_list)} tuples...")
-    batches = [sample(batch[0] + batch[1], len(batch[0]) + len(batch[1])) for batch in create_balanced_batches(tuple_list)] 
+    if args.do_balancing:    
+        logging.info(f"Creating balanced batches from {len(tuple_list)} tuples...")
+        batches = [sample(batch[0] + batch[1], len(batch[0]) + len(batch[1])) for batch in create_balanced_batches(tuple_list)] 
+    else:
+        batches = [] + tuple_list
 
     # Save the balanced batches to disk
-    output_filepath = join(dataset_root, f"{sampler}_balanced_batches.json")
-    logging.info(f"Created {len(batches)} balanced batches. Saving to {output_filepath}...")
+    output_filepath = join(dataset_root, f"{sampler}{'_balanced' if args.do_balancing else ''}_batches.json")
+    logging.info(f"Created {len(batches)} batches. Saving to {output_filepath}...")
     with open(output_filepath, "w") as wfi:
         json.dump(batches, wfi)
     

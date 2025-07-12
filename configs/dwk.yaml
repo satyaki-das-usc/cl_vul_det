@@ -111,7 +111,7 @@ hyper_parameters:
   optimizer: Adam
   nesterov: true
   use_warmup_lr: false
-  contrastive_warmup_epochs: 10
+  contrastive_warmup_epochs: 0
   contrastive_learning_weight_factor: 1.0
   learning_rate: 0.002
   weight_decay: 0
