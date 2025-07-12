@@ -1,8 +1,11 @@
 import pickle
 import json
 import networkx as nx
+import torch
 
 from os.path import join, splitext
+from random import shuffle
+from math import ceil
 
 from omegaconf import DictConfig
 from tqdm import tqdm
@@ -150,3 +153,27 @@ class BalancedSampler(Sampler):
 
     def __len__(self):
         return len(self.custom_batches)
+
+class HierarchicalRandomBatchSampler(Sampler):
+    def __init__(self, sub_datasets_filepath, generator=torch.Generator(), batch_size=32):
+        with open(sub_datasets_filepath, "r") as rfi:
+            self.sub_datasets = json.load(rfi)
+        self.generator = generator
+        self.batch_size = batch_size
+        self.total = 0
+        for sub_dataset in self.sub_datasets:
+            self.total += ceil((len(sub_dataset) / self.batch_size))
+
+    def __iter__(self):
+        sd_order = list(range(len(self.sub_datasets)))
+        shuffle(sd_order)
+
+        for sd_idx in sd_order:
+            sub_dataset = self.sub_datasets[sd_idx]
+            perm = torch.randperm(len(sub_dataset), generator=self.generator).tolist()
+
+            for j in range(0, len(perm), self.batch_size):
+                yield perm[j:j + self.batch_size]
+
+    def __len__(self):
+        return self.total

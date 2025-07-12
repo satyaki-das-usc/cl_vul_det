@@ -228,6 +228,7 @@ if __name__ == "__main__":
         logging.info(f"Epoch {epoch + 1}")
         model.train()
         progress_bar = tqdm(range(0, len(sample_list), BATCH_SIZE))
+        random.shuffle(sample_list)
         # progress_bar.set_description(f"Loss: {torch.nan}")
         epoch_loss = [0.0]
         epoch_vul_rowwise_entropy = [0.0]

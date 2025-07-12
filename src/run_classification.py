@@ -16,7 +16,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 
 from src.common_utils import get_arg_parser, filter_warnings
 from src.vocabulary import Vocabulary
-from src.torch_data.custom_samplers import BalancedSampler
+from src.torch_data.custom_samplers import BalancedSampler, HierarchicalRandomBatchSampler
 from src.torch_data.datamodules import SliceDataModule
 from src.models.vul_det import CLVulDet, NoCLVulDet
 
@@ -67,7 +67,7 @@ def train(model: LightningModule, data_module: LightningDataModule,
     # tensorboard logger
     # tensorlogger = TensorBoardLogger(join("ts_logger", model_name, gnn_name, sampler_name, nn_text, lr_warmup_text, cl_warmup_text),
     #                                  dataset_name)
-    tensorlogger = TensorBoardLogger(join("ts_logger", "balanced_cl_classification", model_name, gnn_name, sampler_name, nn_text, cl_warmup_text), dataset_name)
+    tensorlogger = TensorBoardLogger(join("ts_logger", "rand_classification", model_name, gnn_name, sampler_name, nn_text, cl_warmup_text), dataset_name)
     # define model checkpoint callback
     checkpoint_callback = ModelCheckpoint(
         dirpath=join(tensorlogger.log_dir, "checkpoints"),
@@ -104,7 +104,7 @@ def train(model: LightningModule, data_module: LightningDataModule,
     )
     
     # checkpoint_dir = join(config.model_save_dir, gnn_name, sampler_name, nn_text, lr_warmup_text, cl_warmup_text)
-    checkpoint_dir = join(config.model_save_dir, "balanced_cl_classification", gnn_name, sampler_name, nn_text, cl_warmup_text)
+    checkpoint_dir = join(config.model_save_dir, "rand_classification", gnn_name, sampler_name, nn_text, cl_warmup_text)
     if not exists(checkpoint_dir):
         os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_path = join(checkpoint_dir, f"{model_name}.ckpt")
@@ -166,8 +166,8 @@ if __name__ == "__main__":
     logging.info(f"Completed. Loaded {len(train_slices)} slices.")
 
     logging.info(f"Creating {sample_name_map[sampler]} sampler...")
-    balanced_batches_filepath = join(dataset_root, f"{sampler}_balanced_batches.json")
-    train_sampler = BalancedSampler(balanced_batches_filepath)
+    sub_datasets_filepath = join(dataset_root, f"{sampler}_sub_datasets.json")
+    train_sampler = HierarchicalRandomBatchSampler(sub_datasets_filepath, batch_size=config.hyper_parameters.batch_size)
     logging.info(f"{sample_name_map[sampler]} sampler created.")
 
     logging.info("Loading data module...")

@@ -371,10 +371,13 @@ if __name__ == "__main__":
         logging.info(f"Creating balanced batches from {len(tuple_list)} tuples...")
         batches = [sample(batch[0] + batch[1], len(batch[0]) + len(batch[1])) for batch in create_balanced_batches(tuple_list)] 
     else:
-        batches = [] + tuple_list
+        batches = [batch[0] + batch[1] for batch in tuple_list]
 
     # Save the balanced batches to disk
-    output_filepath = join(dataset_root, f"{sampler}{'_balanced' if args.do_balancing else ''}_batches.json")
+    if args.do_balancing:
+        output_filepath = join(dataset_root, f"{sampler}_balanced_batches.json")
+    else:
+        output_filepath = join(dataset_root, f"{sampler}_sub_datasets.json")
     logging.info(f"Created {len(batches)} batches. Saving to {output_filepath}...")
     with open(output_filepath, "w") as wfi:
         json.dump(batches, wfi)
