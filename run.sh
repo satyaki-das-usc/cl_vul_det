@@ -49,9 +49,9 @@ PYTHONPATH="." python src/preprocess/generate_custom_balanced_batches.py -s inst
 PYTHONPATH="." python src/preprocess/generate_custom_balanced_batches.py -s vf
 PYTHONPATH="." python src/preprocess/generate_custom_balanced_batches.py -s swav
 
-screen -S instance_representation -d -m bash -c "PYTHONPATH='.' python src/run_representation.py -s instance --exclude_NNs"
-screen -S vf_representation -d -m bash -c "PYTHONPATH='.' python src/run_representation.py -s vf --exclude_NNs"
-screen -S swav_representation -d -m bash -c "PYTHONPATH='.' python src/run_representation.py -s swav --exclude_NNs"
+# screen -S instance_representation -d -m bash -c "PYTHONPATH='.' python src/run_representation.py -s instance --exclude_NNs"
+# screen -S vf_representation -d -m bash -c "PYTHONPATH='.' python src/run_representation.py -s vf --exclude_NNs"
+# screen -S swav_representation -d -m bash -c "PYTHONPATH='.' python src/run_representation.py -s swav --exclude_NNs"
 
 # screen -S instance_representation -d -m bash -c "PYTHONPATH='.' python src/run_representation.py -s instance"
 # screen -S vf_representation -d -m bash -c "PYTHONPATH='.' python src/run_representation.py -s vf"
