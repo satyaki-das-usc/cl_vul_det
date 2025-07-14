@@ -167,13 +167,12 @@ class HierarchicalRandomBatchSampler(Sampler):
     def __iter__(self):
         sd_order = list(range(len(self.sub_datasets)))
         shuffle(sd_order)
-
         for sd_idx in sd_order:
+            shuffle(self.sub_datasets[sd_idx])
             sub_dataset = self.sub_datasets[sd_idx]
-            perm = torch.randperm(len(sub_dataset), generator=self.generator).tolist()
 
-            for j in range(0, len(perm), self.batch_size):
-                yield perm[j:j + self.batch_size]
+            for j in range(0, len(sub_dataset), self.batch_size):
+                yield sub_dataset[j:j + self.batch_size]
 
     def __len__(self):
         return self.total
