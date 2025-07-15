@@ -167,12 +167,16 @@ class HierarchicalRandomBatchSampler(Sampler):
     def __iter__(self):
         sd_order = list(range(len(self.sub_datasets)))
         shuffle(sd_order)
+        with open("batch.txt", "a") as afi:
+            afi.write(f"-----------------------------------\nsd_order: {sd_order}\n")
         for sd_idx in sd_order:
             shuffle(self.sub_datasets[sd_idx])
             sub_dataset = self.sub_datasets[sd_idx]
 
-            for j in range(0, len(sub_dataset), self.batch_size):
-                yield sub_dataset[j:j + self.batch_size]
+            for i in range(0, len(sub_dataset), self.batch_size):
+                with open("batch.txt", "a") as afi:
+                    afi.write(f"sub_dataset: {sub_dataset[i:i + self.batch_size]}\n")
+                yield sub_dataset[i:i + self.batch_size]
 
     def __len__(self):
         return self.total
