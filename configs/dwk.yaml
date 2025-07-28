@@ -1,7 +1,7 @@
 seed: 7
 num_workers: -1
 log_offline: false
-joern_path: joern/joern-parse
+joern_path: ~/joern/joern-parse
 split_token: false
 cleaning_method: raw
 temp_root: temp/data
@@ -32,7 +32,7 @@ unperturbed_files_filename: unperturbed_file_list.json
 sensi_api_filename: sensi_api.json
 sensi_api_map_filename: sensi_api_map.json
 instance_perturbation_map_filename: instance_perturbation_map.json
-swav_batches_filename: swav_batches.json
+swav_batches_filename: swav_multicrop_batches.json
 pairs_filename: vv_vn_pairs.json
 ignore_list_filename: ignore_list.json
 ignore_list_detection_result_filename: ignore_list_detection_result.json
@@ -44,7 +44,7 @@ log_every_epoch: 10
 progress_bar_refresh_rate: 1
 exclude_NNs: false
 dataset:
-  name: SARD
+  name: VF_perts
   token:
     max_parts: 16
     is_wrapped: false
@@ -53,6 +53,8 @@ dataset:
 min_vul_per_batch: 3
 min_nonvul_per_batch: 1
 swav:
+  num_prototypes: 128
+  temperature: 0.1
   sinkhorn:
     n_iters: 10
     epsilon: 0.5
@@ -70,11 +72,13 @@ swav:
   nonvul_gamma: 0.01
   n_epochs: 10
   use_prototype_loss: true
-  model_save_path: GraphSwAV
+  model_save_path: GraphSwAV.ckpt
+  prototypes_save_path: GraphSwAV_prototypes.ckpt
 gnn:
   name: gine
   edge_dim: 2
   w2v_path: ${data_folder}/${dataset.name}/w2v.wv
+  projection_dim: 128
   embed_size: 256
   hidden_size: 256
   pooling_ratio: 0.8
@@ -111,7 +115,7 @@ hyper_parameters:
   optimizer: Adam
   nesterov: true
   use_warmup_lr: false
-  contrastive_warmup_epochs: 10
+  contrastive_warmup_epochs: 0
   contrastive_learning_weight_factor: 1.0
   learning_rate: 0.002
   weight_decay: 0

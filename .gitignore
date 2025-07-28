@@ -1,6 +1,7 @@
 logs/
 data/VF_perts/
 data/NVD/
+data/Devign/
 temp/data/
 ts_logger/
 plot/

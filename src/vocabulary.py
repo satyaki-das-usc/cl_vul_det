@@ -77,6 +77,13 @@ class Vocabulary:
         """
         return self.token_to_id[PAD]
     
+    def get_unk_id(self):
+        """
+        Get the id of the unknown token.
+        :return: id of the unknown token
+        """
+        return self.token_to_id[UNK]
+    
     def convert_tokens_to_ids(self, tokens: List[str]):
         """
         Convert a list of tokens to a list of ids.

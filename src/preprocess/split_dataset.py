@@ -43,6 +43,9 @@ if __name__ == "__main__":
         dataset_root = config.temp_root
     else:
         dataset_root = config.data_folder
+    
+    if config.dataset.name == "Devign":
+        dataset_root = join(config.data_folder, config.dataset.name)
 
     all_slices_filepath = join(dataset_root, config.all_slices_filename)
 

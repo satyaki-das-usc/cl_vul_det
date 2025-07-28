@@ -336,6 +336,9 @@ if __name__ == "__main__":
     else:
         dataset_root = config.data_folder
     
+    if config.dataset.name == "Devign":
+        dataset_root = join(config.data_folder, config.dataset.name)
+    
     train_dataset_path = join(dataset_root, config.train_slices_filename)
     logging.info(f"Loading training dataset from {train_dataset_path}")
     with open(train_dataset_path, "r") as rfi:

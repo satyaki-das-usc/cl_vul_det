@@ -207,14 +207,19 @@ class GraphSwAVModel(torch.nn.Module):
     }
 
     def __init__(self, config: DictConfig, vocab: Vocabulary, vocabulary_size: int,
-                 pad_idx: int, num_clusters=1000):
+                 pad_idx: int):
         super().__init__()
         hidden_dim = config.gnn.hidden_size
         self.__graph_encoder = self._encoders[config.gnn.name](config.gnn, vocab, vocabulary_size,
                                                                pad_idx)
-        self.cluster_head = torch.nn.Linear(hidden_dim, num_clusters)
+        self.projection_head = torch.nn.Sequential(
+            torch.nn.Linear(hidden_dim, config.gnn.projection_dim),
+            torch.nn.ReLU(),
+            torch.nn.Linear(config.gnn.projection_dim, config.gnn.projection_dim)
+        )
 
     def forward(self, batch: Batch):
         graph_activations = self.__graph_encoder(batch)  # [num_graphs, hidden_dim]
-        logits = self.cluster_head(graph_activations)
+        logits = self.projection_head(graph_activations)
+        logits = F.normalize(logits, dim=-1)
         return logits, graph_activations  # [num_graphs, num_clusters]

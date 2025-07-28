@@ -146,7 +146,7 @@ def get_centroid_merged_clusters(centroids, invalid_mask, inadequate_clusters, a
 
 def get_prototype_merged_clusters(prototypes, inadequate_clusters, all_labels, cluster_to_indices, config):
     with torch.no_grad():
-        prototypes = F.normalize(model.cluster_head.weight, dim=1)
+        prototypes = F.normalize(model.projection_head.weight, dim=1)
         similarity_matrix = prototypes @ prototypes.T
     
     merged_clusters = dict()
@@ -197,6 +197,9 @@ if __name__ == "__main__":
     else:
         dataset_root = config.data_folder
     
+    if config.dataset.name == "Devign":
+        dataset_root = join(config.data_folder, config.dataset.name)
+    
     max_len = config.dataset.token.max_parts
     vocab = Vocabulary.from_w2v(join(dataset_root, "w2v.wv"))
     vocab_size = vocab.get_vocab_size()
@@ -222,7 +225,7 @@ if __name__ == "__main__":
     in_channels = sample_list[0].graph.x.shape[1]
     edge_dim = sample_list[0].graph.edge_attr.shape[1]
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = GraphSwAVModel(config, vocab, vocab_size, pad_idx, num_clusters=num_clusters).to(device)
+    model = GraphSwAVModel(config, vocab, vocab_size, pad_idx).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     for epoch in range(config.swav.n_epochs):
         logging.info(f"Epoch {epoch + 1}")
@@ -272,7 +275,7 @@ if __name__ == "__main__":
             intra_cluster_dissim_loss = soft_intra_cluster_dissimilarity(activations, sinkhorn_targets)
             
             if config.swav.use_prototype_loss:
-                proto_loss = prototype_dissimilarity_loss(F.normalize(model.cluster_head.weight, dim=1), margin=config.swav.margin)
+                proto_loss = prototype_dissimilarity_loss(F.normalize(model.projection_head.weight, dim=1), margin=config.swav.margin)
                 alpha = 0.25
                 beta = 0.24
                 gamma = 0.27
@@ -418,7 +421,7 @@ if __name__ == "__main__":
     logging.info(f"{len(inadequate_clusters)} inadequate clusters found. Merging them with adequate clusters...")
 
     with torch.no_grad():
-        prototypes = F.normalize(model.cluster_head.weight, dim=1)
+        prototypes = F.normalize(model.projection_head.weight, dim=1)
         similarity_matrix = prototypes @ prototypes.T
     
     if args.merge_type == "prototype":

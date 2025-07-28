@@ -95,6 +95,8 @@ if __name__ == "__main__":
         dataset_root = config.temp_root
     else:
         dataset_root = config.data_folder
+    if config.dataset.name == "Devign":
+        dataset_root = join(config.data_folder, config.dataset.name)
     file_slices_path = join(dataset_root, config.file_slices_filename)
 
     logging.info(f"Loading filewise generated slices from {file_slices_path}...")

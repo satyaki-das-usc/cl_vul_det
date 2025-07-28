@@ -478,6 +478,21 @@ def main(args: argparse.Namespace):
 
         return
 
+    if config.dataset.name == "Devign":
+        dataset_root = join(config.data_folder, config.dataset.name)
+        logging.info(f"Processing Devign data from {dataset_root}...")
+        all_slice_list += process_dataset(dataset_root, config, args.only_clear_slices)
+
+        all_slices_filepath = join(dataset_root, config.all_slices_filename)
+        logging.info(f"Writing {len(all_slice_list)} slices to {all_slices_filepath}...")
+        with open(all_slices_filepath, "w") as wfi:
+            json.dump(all_slice_list, wfi, indent=2)
+        logging.info(f"Completed.")
+        logging.info("=========End session=========")
+        logging.shutdown()
+
+        return
+
     for idx, feat_name in enumerate(config.vul_feats):
         feat_name_code_map[feat_name] = idx
     

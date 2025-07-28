@@ -19,6 +19,7 @@ from src.vocabulary import Vocabulary
 from src.torch_data.custom_samplers import BalancedSampler, HierarchicalRandomBatchSampler
 from src.torch_data.datamodules import SliceDataModule
 from src.models.vul_det import CLVulDet, NoCLVulDet
+from src.models.modules.gnns import GraphSwAVModel
 
 sampler = ""
 
@@ -155,9 +156,13 @@ if __name__ == "__main__":
     else:
         dataset_root = config.data_folder
     
+    if config.dataset.name == "Devign":
+        dataset_root = join(config.data_folder, config.dataset.name)
+    
     vocab = Vocabulary.from_w2v(join(dataset_root, "w2v.wv"))
     vocab_size = vocab.get_vocab_size()
     pad_idx = vocab.get_pad_id()
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     train_slices_filepath = join(dataset_root, config.train_slices_filename)
     logging.info(f"Loading training slice paths list from {train_slices_filepath}...")
@@ -174,9 +179,16 @@ if __name__ == "__main__":
     data_module = SliceDataModule(config, vocab, train_sampler=train_sampler, use_temp_data=args.use_temp_data)
     logging.info("Data module loading completed.")
 
+    graph_encoder = None
+    if sampler == "swav":
+        graph_encoder = GraphSwAVModel(config, vocab, vocab_size, pad_idx)
+        checkpoint = torch.load(config.swav.model_save_path, map_location=device)
+        graph_encoder.load_state_dict(checkpoint)
+        graph_encoder = graph_encoder.to(device)
+    
     if args.no_cl:
-        model = NoCLVulDet(config, vocab, vocab_size, pad_idx)
+        model = NoCLVulDet(config, vocab, vocab_size, pad_idx, graph_encoder=graph_encoder)
     else:
-        model = CLVulDet(config, vocab, vocab_size, pad_idx)
+        model = CLVulDet(config, vocab, vocab_size, pad_idx, graph_encoder=graph_encoder)
 
     train(model, data_module, config)

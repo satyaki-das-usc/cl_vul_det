@@ -10,6 +10,7 @@ wordninja
 gensim
 transformers
 tensorboard
+torchinfo
 
 # Utilities
 omegaconf

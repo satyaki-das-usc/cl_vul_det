@@ -42,6 +42,7 @@ PYTHONPATH="." python src/preprocess/word_embedding.py &&
 PYTHONPATH="." python src/preprocess/split_dataset.py &&
 PYTHONPATH="." python src/preprocess/generate_instance_perturbation_mapping.py &&
 PYTHONPATH="." python src/preprocess/generate_swav_batches.py &&
+PYTHONPATH="." python src/preprocess/generate_multicrop_swav_batches.py
 # PYTHONPATH="." python src/preprocess/split_large_batches.py
 
 
@@ -56,6 +57,8 @@ PYTHONPATH="." python src/preprocess/generate_custom_balanced_batches.py -s swav
 # screen -S instance_representation -d -m bash -c "PYTHONPATH='.' python src/run_representation.py -s instance"
 # screen -S vf_representation -d -m bash -c "PYTHONPATH='.' python src/run_representation.py -s vf"
 # screen -S swav_representation -d -m bash -c "PYTHONPATH='.' python src/run_representation.py -s swav"
+
+screen -S multicrop_swav -d -m bash -c "PYTHONPATH='.' python src/preprocess/generate_multicrop_swav_batches.py"
 
 screen -S instance -d -m bash -c "PYTHONPATH='.' python src/run_classification.py -s instance"
 screen -S vf -d -m bash -c "PYTHONPATH='.' python src/run_classification.py -s vf"
@@ -78,7 +81,9 @@ PYTHONPATH="." python src/run_classification.py -s instance --exclude_NNs --no_c
 PYTHONPATH="." python src/run_classification.py -s instance &&
 PYTHONPATH="." python src/run_classification.py -s instance --no_cl &&
 PYTHONPATH="." python src/run_classification.py -s vf &&
-PYTHONPATH="." python src/run_classification.py -s vf --no_cl
+PYTHONPATH="." python src/run_classification.py -s vf --no_cl &&
+PYTHONPATH="." python src/run_classification.py -s swav &&
+PYTHONPATH="." python src/run_classification.py -s swav --no_cl
 
 
 PYTHONPATH="." python src/evaluate_all_model_configurations.py

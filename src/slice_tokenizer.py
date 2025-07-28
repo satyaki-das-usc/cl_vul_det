@@ -14,8 +14,12 @@ def is_partial_for_loop(node_sym_code: str) -> bool:
     Check if the node_sym_code is a partial for loop.
     A partial for loop is one that has the form "for (init; condition; step)".
     """
-    part1, part2 = [part.strip() for part in node_sym_code.strip("(").rpartition(")")[0].split(";")]
-    
+    parts = [part.strip() for part in node_sym_code.strip("(").rpartition(")")[0].split(";")]
+    part1 = parts[0]
+    if len(parts) < 2:
+        return False
+    part2 = parts[1]
+
     return len(part1.strip()) > 0 and len(part2.strip()) > 0
 
 class SliceTokenizer:
