@@ -5,7 +5,7 @@ data/Devign/
 temp/data/
 ts_logger/
 plot/
-models/
+saved_models/
 *.json
 *.wv
 *.pyc
