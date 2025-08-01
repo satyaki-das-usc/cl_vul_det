@@ -105,7 +105,7 @@ def train(model: LightningModule, data_module: LightningDataModule,
     )
     
     # checkpoint_dir = join(config.model_save_dir, gnn_name, sampler_name, nn_text, lr_warmup_text, cl_warmup_text)
-    checkpoint_dir = join(config.model_save_dir, "rand_classification", gnn_name, sampler_name, nn_text, cl_warmup_text)
+    checkpoint_dir = join(config.model_save_dir, "rand_classification", dataset_name, gnn_name, sampler_name, nn_text, cl_warmup_text)
     if not exists(checkpoint_dir):
         os.makedirs(checkpoint_dir, exist_ok=True)
     checkpoint_path = join(checkpoint_dir, f"{model_name}.ckpt")
@@ -151,13 +151,9 @@ if __name__ == "__main__":
     else:
         USE_CPU = cpu_count()
 
+    dataset_root = join(config.data_folder, config.dataset.name)
     if args.use_temp_data:
         dataset_root = config.temp_root
-    else:
-        dataset_root = config.data_folder
-    
-    if config.dataset.name == "Devign":
-        dataset_root = join(config.data_folder, config.dataset.name)
     
     vocab = Vocabulary.from_w2v(join(dataset_root, "w2v.wv"))
     vocab_size = vocab.get_vocab_size()
@@ -182,7 +178,7 @@ if __name__ == "__main__":
     graph_encoder = None
     if sampler == "swav":
         graph_encoder = GraphSwAVModel(config, vocab, vocab_size, pad_idx)
-        checkpoint = torch.load(config.swav.model_save_path, map_location=device)
+        checkpoint = torch.load(join(dataset_root, config.swav.model_save_path), map_location=device)
         graph_encoder.load_state_dict(checkpoint)
         graph_encoder = graph_encoder.to(device)
     

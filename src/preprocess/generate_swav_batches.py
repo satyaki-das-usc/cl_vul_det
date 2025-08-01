@@ -192,13 +192,9 @@ if __name__ == "__main__":
     else:
         USE_CPU = cpu_count()
 
+    dataset_root = join(config.data_folder, config.dataset.name)
     if args.use_temp_data:
         dataset_root = config.temp_root
-    else:
-        dataset_root = config.data_folder
-    
-    if config.dataset.name == "Devign":
-        dataset_root = join(config.data_folder, config.dataset.name)
     
     max_len = config.dataset.token.max_parts
     vocab = Vocabulary.from_w2v(join(dataset_root, "w2v.wv"))

@@ -44,7 +44,7 @@ log_every_epoch: 10
 progress_bar_refresh_rate: 1
 exclude_NNs: false
 dataset:
-  name: VF_perts
+  name: Devign
   token:
     max_parts: 16
     is_wrapped: false
@@ -53,6 +53,7 @@ dataset:
 min_vul_per_batch: 3
 min_nonvul_per_batch: 1
 swav:
+  learning_rate: 0.001
   num_prototypes: 128
   temperature: 0.1
   sinkhorn:
@@ -60,7 +61,8 @@ swav:
     epsilon: 0.5
     temperature: 10.0
   contrastive:
-    temperature: 0.2
+    temperature: 0.1
+    lambda_h: 1.0
     alpha: 0.25
     omega: 0.25
   margin: 0.5

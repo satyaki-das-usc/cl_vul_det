@@ -47,15 +47,12 @@ class SliceGraph:
         edge_attr = []
 
         for u, v, data in self.__slice_graph.edges(data=True):
-            if self.__slice_graph.graph["type"] == "forward":
+            if "direction" not in data:
+                raise ValueError(f"Edge {u} -> {v} does not have a direction attribute.")
+            if data["direction"] == "forward":
                 edge_index.append((self.node_to_idx[f"{u}"], self.node_to_idx[f"{v}"]))
                 edge_attr.append((vocab.get_id(data["label"]), vocab.get_id(data["var"]) if "var" in data else vocab.get_pad_id()))
-            elif self.__slice_graph.graph["type"] == "backward":
-                edge_index.append((self.node_to_idx[f"{v}"], self.node_to_idx[f"{u}"]))
-                edge_attr.append((vocab.get_id(edge_type_map[data["label"]]), vocab.get_id(data["var"]) if "var" in data else vocab.get_pad_id()))
-            elif self.__slice_graph.graph["type"] == "both":
-                edge_index.append((self.node_to_idx[f"{u}"], self.node_to_idx[f"{v}"]))
-                edge_attr.append((vocab.get_id(data["label"]), vocab.get_id(data["var"]) if "var" in data else vocab.get_pad_id()))
+            elif data["direction"] == "backward":
                 edge_index.append((self.node_to_idx[f"{v}"], self.node_to_idx[f"{u}"]))
                 edge_attr.append((vocab.get_id(edge_type_map[data["label"]]), vocab.get_id(data["var"]) if "var" in data else vocab.get_pad_id()))
             

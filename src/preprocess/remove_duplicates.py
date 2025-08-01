@@ -91,14 +91,11 @@ if __name__ == "__main__":
     else:
         USE_CPU = cpu_count()
 
+    dataset_root = join(config.data_folder, config.dataset.name)
     if args.use_temp_data:
         dataset_root = config.temp_root
-    else:
-        dataset_root = config.data_folder
-    if config.dataset.name == "Devign":
-        dataset_root = join(config.data_folder, config.dataset.name)
+    
     file_slices_path = join(dataset_root, config.file_slices_filename)
-
     logging.info(f"Loading filewise generated slices from {file_slices_path}...")
     with open(file_slices_path, "r") as rfi:
         file_slices = json.load(rfi)

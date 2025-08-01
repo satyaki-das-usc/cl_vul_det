@@ -11,6 +11,7 @@ gensim
 transformers
 tensorboard
 torchinfo
+pot
 
 # Utilities
 omegaconf

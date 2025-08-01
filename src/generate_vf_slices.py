@@ -42,7 +42,7 @@ def init_log():
     logging.info("=========New session=========")
     logging.info(f"Logging dir: {LOG_DIR}")
 
-def get_forward_slicelines(CPG: nx.DiGraph, line_no: int) -> Set[int]:
+def get_forward_slice_graph(CPG: nx.DiGraph, line_no: int):
     slice_lines = set()
 
     forward_queue = []
@@ -61,11 +61,15 @@ def get_forward_slicelines(CPG: nx.DiGraph, line_no: int) -> Set[int]:
             visited.add(succ)
             forward_queue.append(succ)
     if len(slice_lines) == 0:
-        return []
+        return None
     
-    return slice_lines
+    slice_graph = CPG.subgraph(list(slice_lines)).copy()
+    for u, v, edge_data in slice_graph.edges(data=True):
+        edge_data["direction"] = "forward"
 
-def get_backward_slicelines(CPG: nx.DiGraph, line_no: int) -> Set[int]:
+    return slice_graph, slice_lines
+
+def get_backward_slice_graph(CPG: nx.DiGraph, line_no: int):
     slice_lines = set()
 
     backward_queue = []
@@ -84,27 +88,28 @@ def get_backward_slicelines(CPG: nx.DiGraph, line_no: int) -> Set[int]:
             visited.add(pred)
             backward_queue.append(pred)
     if len(slice_lines) == 0:
-        return []
+        return None
     
-    return slice_lines
+    slice_graph = CPG.subgraph(list(slice_lines)).copy()
+    for u, v, edge_data in slice_graph.edges(data=True):
+        edge_data["direction"] = "backward"
 
-def get_both_slicelines(CPG: nx.DiGraph, line_no: int) -> Set[int]:
-
-    return get_forward_slicelines(CPG, line_no) | get_backward_slicelines(CPG, line_no)
+    return slice_graph, slice_lines
 
 def get_slices_with_direction(CPG: nx.DiGraph, line_no: int, vul_lines: Set[int], direction: str) -> List[nx.DiGraph]:
-    slice_lines = set()
     if direction == "forward":
-        slice_lines = get_forward_slicelines(CPG, line_no)
+        slice_graph, slice_lines = get_forward_slice_graph(CPG, line_no)
     elif direction == "backward":
-        slice_lines = get_backward_slicelines(CPG, line_no)
+        slice_graph, slice_lines = get_backward_slice_graph(CPG, line_no)
     elif direction == "both":
-        slice_lines = get_both_slicelines(CPG, line_no)
+        forward_slice_graph, forward_slice_lines = get_forward_slice_graph(CPG, line_no)
+        backward_slice_graph, backward_slice_lines = get_backward_slice_graph(CPG, line_no)
+        slice_graph = nx.compose(forward_slice_graph, backward_slice_graph)
+        slice_lines = forward_slice_lines | backward_slice_lines
     else:
         raise ValueError(f"Invalid slice direction: {direction}")
 
     label = len(slice_lines.intersection(vul_lines)) > 0
-    slice_graph = CPG.subgraph(list(slice_lines)).copy()
     slice_graph.graph["label"] = label
     slice_graph.graph["key_line"] = line_no
     slice_graph.graph["type"] = direction
@@ -443,67 +448,33 @@ def main(args: argparse.Namespace):
     global sensi_api_path, USE_CPU
     config = cast(DictConfig, OmegaConf.load(args.config))
     sensi_api_path = join(config.data_folder, config.sensi_api_map_filename)
+    
     if config.num_workers != -1:
         USE_CPU = min(config.num_workers, cpu_count())
     else:
         USE_CPU = cpu_count()
 
-    all_slice_list = []
+    dataset_root = join(config.data_folder, config.dataset.name)
     if args.use_temp_data:
-        logging.info(f"Processing temp data from {config.temp_root}...")
-        all_slice_list += process_dataset(config.temp_root, config, args.only_clear_slices)
-
-        all_slices_filepath = join(config.temp_root, config.all_slices_filename)
-        logging.info(f"Writing {len(all_slice_list)} slices to {all_slices_filepath}...")
-        with open(all_slices_filepath, "w") as wfi:
-            json.dump(all_slice_list, wfi, indent=2)
-        logging.info(f"Completed.")
-        logging.info("=========End session=========")
-        logging.shutdown()
-
-        return
+        dataset_root = config.temp_root
     
-    if args.use_nvd:
-        dataset_root = join(config.data_folder, config.dataset.name)
-        logging.info(f"Processing NVD data from {dataset_root}...")
+    if args.use_temp_data:
+        logging.info(f"Processing temp data from {dataset_root}...")
+    else:
+        logging.info(f"Processing {config.dataset.name} data from {dataset_root}...")
+
+    all_slice_list = []
+    if config.dataset.name != config.VF_perts_root or args.use_temp_data:
         all_slice_list += process_dataset(dataset_root, config, args.only_clear_slices)
+    else:
+        global feat_name_code_map
+        feat_name_code_map = {feat_name: idx for idx, feat_name in enumerate(config.vul_feats)}
+        for feat_name in config.vul_feats:
+            logging.info(f"Processing {feat_name}...")
+            feat_dir = join(dataset_root, feat_name)
+            all_slice_list += process_dataset(feat_dir, config, args.only_clear_slices)
 
-        all_slices_filepath = join(dataset_root, config.all_slices_filename)
-        logging.info(f"Writing {len(all_slice_list)} slices to {all_slices_filepath}...")
-        with open(all_slices_filepath, "w") as wfi:
-            json.dump(all_slice_list, wfi, indent=2)
-        logging.info(f"Completed.")
-        logging.info("=========End session=========")
-        logging.shutdown()
-
-        return
-
-    if config.dataset.name == "Devign":
-        dataset_root = join(config.data_folder, config.dataset.name)
-        logging.info(f"Processing Devign data from {dataset_root}...")
-        all_slice_list += process_dataset(dataset_root, config, args.only_clear_slices)
-
-        all_slices_filepath = join(dataset_root, config.all_slices_filename)
-        logging.info(f"Writing {len(all_slice_list)} slices to {all_slices_filepath}...")
-        with open(all_slices_filepath, "w") as wfi:
-            json.dump(all_slice_list, wfi, indent=2)
-        logging.info(f"Completed.")
-        logging.info("=========End session=========")
-        logging.shutdown()
-
-        return
-
-    for idx, feat_name in enumerate(config.vul_feats):
-        feat_name_code_map[feat_name] = idx
-    
-    VF_pert_root = join(config.data_folder, config.VF_perts_root)
-
-    for feat_name in config.vul_feats:
-        logging.info(f"Processing {feat_name}...")
-        feat_dir = join(VF_pert_root, feat_name)
-        all_slice_list += process_dataset(feat_dir, config, args.only_clear_slices)
-        
-    all_slices_filepath = join(config.data_folder, config.all_slices_filename)
+    all_slices_filepath = join(dataset_root, config.all_slices_filename)
     logging.info(f"Writing {len(all_slice_list)} slices to {all_slices_filepath}...")
     with open(all_slices_filepath, "w") as wfi:
         json.dump(all_slice_list, wfi, indent=2)

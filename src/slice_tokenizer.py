@@ -97,13 +97,13 @@ class SliceTokenizer:
             self.slice_graph.nodes[new_node]["sym_code"] = step
             self.slice_graph.nodes[new_node]["code_sym_token"] = self.custome_tokenize_code_line(step, False)
             edges_to_remove.append((start, end))
-            new_edges.append((start, new_node, {"label": "CONTROLS"}))
+            new_edges.append((start, new_node, {"label": "CONTROLS", "direction": "forward"}))
             
             for start, end, edge_data in self.slice_graph.out_edges(start, data=True):
                 if edge_data["label"] == "CONTROLS":
                     continue
                 edges_to_remove.append((start, end))
-                new_edges.append((new_node, end, {"label": edge_data["label"], "var": edge_data["var"].strip()}))
+                new_edges.append((new_node, end, {"label": edge_data["label"], "var": edge_data["var"].strip(), "direction": "forward"}))
             self.slice_graph.remove_edges_from(edges_to_remove)
             self.slice_graph.add_edges_from(new_edges)
 
@@ -140,13 +140,13 @@ class SliceTokenizer:
             self.slice_graph.nodes[new_node]["sym_code"] = statement
             self.slice_graph.nodes[new_node]["code_sym_token"] = self.custome_tokenize_code_line(statement, False)
             edges_to_remove.append((start, end))
-            new_edges.append((start, new_node, {"label": "CONTROLS"}))
+            new_edges.append((start, new_node, {"label": "CONTROLS", "direction": "forward"}))
 
             for start, end, edge_data in self.slice_graph.out_edges(start, data=True):
                 if edge_data["label"] == "CONTROLS":
                     continue
                 edges_to_remove.append((start, end))
-                new_edges.append((new_node, end, {"label": edge_data["label"], "var": edge_data["var"].strip()}))
+                new_edges.append((new_node, end, {"label": edge_data["label"], "var": edge_data["var"].strip(), "direction": "forward"}))
 
             self.slice_graph.remove_edges_from(edges_to_remove)
             self.slice_graph.add_edges_from(new_edges)
@@ -162,13 +162,13 @@ class SliceTokenizer:
             self.slice_graph.nodes[new_node]["sym_code"] = step
             self.slice_graph.nodes[new_node]["code_sym_token"] = self.custome_tokenize_code_line(step, False)
             edges_to_remove.append((start, end))
-            new_edges.append((start, new_node, {"label": "CONTROLS"}))
+            new_edges.append((start, new_node, {"label": "CONTROLS", "direction": "forward"}))
             
             for start, end, edge_data in self.slice_graph.out_edges(start, data=True):
                 if edge_data["label"] == "CONTROLS":
                     continue
                 edges_to_remove.append((start, end))
-                new_edges.append((new_node, end, {"label": edge_data["label"], "var": edge_data["var"].strip()}))
+                new_edges.append((new_node, end, {"label": edge_data["label"], "var": edge_data["var"].strip(), "direction": "forward"}))
             self.slice_graph.remove_edges_from(edges_to_remove)
             self.slice_graph.add_edges_from(new_edges)
         else:
@@ -233,7 +233,6 @@ class SliceTokenizer:
             sym_slice_code += f"{start_node_sym_code}{edge_string}{end_node_sym_code}\n"
             slice_sym_token_list.append(start_node_sym_code_tokens + [token for token in edge_sym_token if not token.startswith("-")] + end_node_sym_code_tokens)
             slice_sym_token_list.append(end_node_sym_code_tokens + [token for token in edge_rev_sym_token if not token.startswith("-")] + start_node_sym_code_tokens)
-            
 
         self.slice_graph.graph['slice_sym_code'] = sym_slice_code
         self.slice_graph.graph['slice_sym_token'] = slice_sym_token_list

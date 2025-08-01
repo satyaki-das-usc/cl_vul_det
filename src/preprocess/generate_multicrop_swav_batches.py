@@ -2,15 +2,20 @@ import random
 import os
 import json
 import torch
+import ot
+import numpy as np
 import networkx as nx
+import matplotlib.pyplot as plt
+
 
 import logging
 
+from multiprocessing import cpu_count
 from omegaconf import DictConfig, OmegaConf
 from typing import List, cast
 from tqdm import tqdm
 from math import ceil
-from os.path import join, isdir
+from os.path import join, isdir, exists
 from collections import defaultdict
 
 from pytorch_lightning import seed_everything
@@ -19,11 +24,13 @@ from torch_geometric.data import Batch, Data
 from torch_geometric.utils import dropout_node, dropout_edge, k_hop_subgraph
 import torch.nn.functional as F
 
+from src.common_utils import get_arg_parser
 from src.vocabulary import Vocabulary
 from src.torch_data.graphs import SliceGraph
 from src.torch_data.samples import SliceGraphSample, SliceGraphBatch
 
 from src.models.modules.gnns import GraphSwAVModel
+from src.models.modules.losses import InfoNCEContrastiveLoss
 
 def init_log():
     LOG_DIR = "logs"
@@ -42,22 +49,37 @@ def init_log():
     logging.info(f"Logging dir: {LOG_DIR}")
 
 def random_node_drop(batch: Batch, p: float = 0.1) -> Batch:
-    """Randomly drop nodes from each graph in the batch with probability p."""
-    edge_index, edge_mask, node_mask = dropout_node(batch.edge_index, p=p, num_nodes=batch.num_nodes, training=True, relabel_nodes=True)
-    # Filter node features and batch mapping according to the mask
-    x = batch.x[node_mask]
-    batch_vec = batch.batch[node_mask]
+    """
+    Apply random node drop per graph in the batch—but only when
+    at least one node remains. Otherwise keep original graph.
+    """
+    all_perturbed_graphs = []
+    for graph_data in batch.to_data_list():
+        num_nodes = graph_data.num_nodes
+        edge_index, edge_mask, node_mask = dropout_node(
+            graph_data.edge_index,
+            p=p,
+            num_nodes=num_nodes,
+            training=True,
+            relabel_nodes=True
+        )
+        # If all nodes dropped => skip augmentation
+        if node_mask.sum().item() < 1:
+            all_perturbed_graphs.append(graph_data)
+            continue
 
-    # Filter edge attributes if necessary
-    edge_attr = None
-    if batch.edge_attr is not None:
-        edge_attr = batch.edge_attr[edge_mask]
+        x = graph_data.x[node_mask]
+        edge_attr = None
+        if graph_data.edge_attr is not None:
+            edge_attr = graph_data.edge_attr[edge_mask]
+        new_data = Data(
+            x=x,
+            edge_index=edge_index,
+            edge_attr=edge_attr
+        )
+        all_perturbed_graphs.append(new_data)
 
-    # Rebuild Data and then Batch for correct consistency
-    new_data = Data(x=x, edge_index=edge_index,
-                    edge_attr=edge_attr, batch=batch_vec)
-
-    return Batch.from_data_list([new_data])
+    return Batch.from_data_list(all_perturbed_graphs)
 
 def random_edge_drop(batch: Batch, p: float = 0.1) -> Batch:
     """Randomly drop edges from each graph in the batch with probability p."""
@@ -97,7 +119,6 @@ def subgraph_crop(batch: Batch, num_hops: int = 2, ratio: float = 0.5) -> Batch:
 
     return Batch.from_data_list(all_subgraphs)
 
-
 def augment_multicrop(batch: Batch,
                       mask_id: int,
                       n_local_views: int = 2) -> List[Batch]:
@@ -126,14 +147,73 @@ def sinkhorn(out, n_iters=3, epsilon=0.05):
         Q /= Q.sum(dim=0, keepdim=True)
     return (Q / Q.sum(dim=0, keepdim=True)).t()
 
-if __name__ == "__main__":
-    config = cast(DictConfig, OmegaConf.load("configs/dwk.yaml"))
-    max_len = config.dataset.token.max_parts
-    dataset_root = config.data_folder
-    config.gnn.w2v_path = join(dataset_root, "w2v.wv")
-    seed_everything(config.seed, workers=True)
+def uot_sinkhorn_gpu(scores: torch.Tensor,
+                     epsilon=0.05,
+                     rho=0.5,
+                     n_iters=5):
+    """
+    GPU-only, batched unbalanced Sinkhorn-like updates.
+    scores: [B, K] = z @ prototypes
+    Returns Q: [B, K] soft assignment distributions.
+    """
+    Q = torch.exp(scores / epsilon)  # non-negative weights [B,K]
+    for _ in range(n_iters):
+        # Row update with relaxation: softly approach uniform mass
+        row_sum = Q.sum(dim=1, keepdim=True)
+        Q = Q / (row_sum + rho)
+        # Column update with relaxation
+        col_sum = Q.sum(dim=0, keepdim=True)
+        Q = Q / (col_sum + rho)
+    # Normalize rows to sum to one (softmax-like)
+    Q = Q / (Q.sum(dim=1, keepdim=True) + 1e-8)
+    return Q
 
+def get_merged_clusters(cluster_ids: List[int], prototypes, min_size: int = 2) -> List[int]:
+    """
+    Merge small clusters into larger ones.
+    """
+    N = prototypes.size(1)
+    with torch.no_grad():
+        proto_sim = prototypes.T @ prototypes
+
+    cluster_ids_tensor = torch.tensor(cluster_ids, dtype=torch.int64)
+    all_ids = torch.arange(N, device=cluster_ids_tensor.device)
+
+    unique, counts = torch.unique(cluster_ids_tensor, return_counts=True)
+    small_clusters = unique[counts < min_size].tolist()
+
+    while len(small_clusters) > 0:
+        for cid in small_clusters:
+            c_proto_sym = proto_sim[cid]
+            c_proto_sym[cid] = float('-inf')  # Exclude self-similarity
+            non_empty_proto_mask = torch.isin(all_ids, unique)
+            c_proto_sym[~non_empty_proto_mask] = float('-inf')  # Exclude empty clusters
+            best_match = c_proto_sym.argmax().item()
+            cluster_ids_tensor[cluster_ids_tensor == cid] = best_match
+            unique, counts = torch.unique(cluster_ids_tensor, return_counts=True)
+            small_clusters = unique[counts < min_size].tolist()
+            if len(small_clusters) == 0:
+                break
+    
+    return cluster_ids_tensor.tolist()
+
+if __name__ == "__main__":
+    arg_parser = get_arg_parser()
+    arg_parser.add_argument("--do_train", action="store_true", help="Enable training; if not set, use pretrained model.")
+    args = arg_parser.parse_args()
     init_log()
+
+    config = cast(DictConfig, OmegaConf.load(args.config))
+    if config.num_workers != -1:
+        USE_CPU = min(config.num_workers, cpu_count())
+    else:
+        USE_CPU = cpu_count()
+
+    dataset_root = join(config.data_folder, config.dataset.name)
+    if args.use_temp_data:
+        dataset_root = config.temp_root
+    
+    seed_everything(config.seed, workers=True)
 
     max_len = config.dataset.token.max_parts
     vocab = Vocabulary.from_w2v(config.gnn.w2v_path)
@@ -159,7 +239,7 @@ if __name__ == "__main__":
     model = GraphSwAVModel(config, vocab, vocab_size, pad_idx).to(device)
     optimizer = torch.optim.AdamW([{
                 "params": p
-            } for p in model.parameters()], config.hyper_parameters.learning_rate)
+            } for p in model.parameters()], config.swav.learning_rate)
     # scheduler = torch.optim.lr_scheduler.LambdaLR(
     #             optimizer,
     #             lr_lambda=lambda epoch: config.hyper_parameters.decay_gamma
@@ -168,54 +248,95 @@ if __name__ == "__main__":
     K = max(1024, ceil(len(train_slices) / config.hyper_parameters.batch_size))
     D = config.gnn.projection_dim
     prototypes = torch.nn.Parameter(torch.randn(D, K, device=device))
+    logging.info(f"Initialized prototypes with shape {prototypes.shape}.")
     with torch.no_grad():
         prototypes.data = F.normalize(prototypes.data, dim=0)
 
-    BATCH_SIZE = 512
+    BATCH_SIZE = 256
     
-    for epoch in range(config.swav.n_epochs):
-        logging.info(f"Epoch {epoch + 1}")
-        freeze_proto = (epoch == 0)
-        if freeze_proto:
-            optimizer = torch.optim.AdamW([{
-                "params": p
-            } for p in model.parameters()], config.hyper_parameters.learning_rate)
-        else:
-            optimizer = torch.optim.AdamW([{
-                "params": p
-            } for p in list(model.parameters()) + [prototypes]], config.hyper_parameters.learning_rate)
-        model.train()
-        random.shuffle(sample_list)
-        progress_bar = tqdm(range(0, len(sample_list), BATCH_SIZE))
+    contrastive_criterion = InfoNCEContrastiveLoss(temperature=config.swav.contrastive.temperature)
 
-        for i in progress_bar:
-            batched_graph = SliceGraphBatch(sample_list[i:i + BATCH_SIZE])
-            batched_graph = batched_graph.graphs.to(device)
-            views = augment_multicrop(batched_graph, mask_id=vocab.get_unk_id(), n_local_views=4)
-            zs, features = zip(*(model(v) for v in views))
-            scores = [z @ prototypes for z in zs]
-            with torch.no_grad():
-                qs = [sinkhorn(s) for s in scores]
-            ps = [F.softmax(s / config.swav.temperature, dim=1) for s in scores]
+    swav_losses = []
+    contrast_losses = []
 
-            loss = 0
-            global_idxs = [0, 1]
-            V = len(zs) - 2
-            for i in global_idxs:
-                for j in range(len(zs)):
-                    if j == i: continue
-                    loss += -(qs[j] * ps[i].log()).sum(dim=1).mean()
-            loss = loss / (len(global_idxs) * (1 + V))
+    if args.do_train:
+        for epoch in range(config.swav.n_epochs):
+            logging.info(f"Epoch {epoch + 1}")
+            freeze_proto = (epoch == 0)
+            if freeze_proto:
+                optimizer = torch.optim.AdamW([{
+                    "params": p
+                } for p in model.parameters()], config.hyper_parameters.learning_rate)
+            else:
+                optimizer = torch.optim.AdamW([{
+                    "params": p
+                } for p in list(model.parameters()) + [prototypes]], config.hyper_parameters.learning_rate)
+            model.train()
+            random.shuffle(sample_list)
+            progress_bar = tqdm(range(0, len(sample_list), BATCH_SIZE))
 
-            progress_bar.set_postfix({'loss': loss.item()})
+            for i in progress_bar:
+                batched_graph = SliceGraphBatch(sample_list[i:i + BATCH_SIZE])
+                batched_graph = batched_graph.graphs.to(device)
+                views = augment_multicrop(batched_graph, mask_id=vocab.get_unk_id(), n_local_views=4)
+                zs, features = zip(*(model(v) for v in views))
+                scores = [z @ prototypes for z in zs]
+                with torch.no_grad():
+                    # qs = [sinkhorn(s) for s in scores]
+                    qs = [uot_sinkhorn_gpu(s) for s in scores]
+                ps = [F.softmax(s / config.swav.temperature, dim=1) for s in scores]
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            with torch.no_grad():
-                prototypes.data = F.normalize(prototypes.data, dim=0)
-        # scheduler.step()
-    
+                swav_loss = 0
+                global_idxs = [0, 1]
+                V = len(zs) - 2
+                for i in global_idxs:
+                    for j in range(len(zs)):
+                        if j == i: continue
+                        swav_loss += -(qs[j] * ps[i].log()).sum(dim=1).mean()
+                swav_loss = swav_loss / (len(global_idxs) * (1 + V))
+
+                h1, h2 = F.normalize(features[0], dim=-1), F.normalize(features[1], dim=-1)
+                contrastive_loss = contrastive_criterion(h1, h2)
+                
+                loss = swav_loss + config.swav.contrastive.lambda_h * contrastive_loss
+
+                swav_losses.append(swav_loss.item())
+                contrast_losses.append(contrastive_loss.item())
+                progress_bar.set_postfix({
+                    'swav': swav_loss.item(),
+                    'contrast': contrastive_loss.item()
+                })
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                with torch.no_grad():
+                    prototypes.data = F.normalize(prototypes.data, dim=0)
+            # scheduler.step()    
+
+        plt.plot(swav_losses, label='SwAV Loss')
+        plt.plot(contrast_losses, label='Contrastive Loss')
+        plt.xlabel('Iteration')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.grid(True)
+        plt.title('Training Loss Convergence')
+        plt.savefig(join(dataset_root, 'training_losses.png'), bbox_inches='tight')
+        plt.close()
+    else:
+        logging.info("Skipping training. Using pretrained model and prototypes.")
+        model_save_path = join(dataset_root, config.swav.model_save_path)
+        if not exists(model_save_path):
+            raise FileNotFoundError(f"Model save path {model_save_path} does not exist.")
+        model.load_state_dict(torch.load(model_save_path, map_location=device))
+        logging.info(f"Model loaded from {model_save_path}")
+
+        prototypes_save_path = join(dataset_root, config.swav.prototypes_save_path)
+        if not exists(prototypes_save_path):
+            raise FileNotFoundError(f"Prototypes save path {prototypes_save_path} does not exist.")
+        prototypes.data = torch.load(prototypes_save_path, map_location=device)
+        logging.info(f"Prototypes loaded from {prototypes_save_path}")
+
     logging.info("Generating cluster IDs...")
     progress_bar = tqdm(range(0, len(sample_list), BATCH_SIZE))
     model.eval()
@@ -223,13 +344,17 @@ if __name__ == "__main__":
     for i in progress_bar:
         batched_graph = SliceGraphBatch(sample_list[i:i + BATCH_SIZE])
         batched_graph = batched_graph.graphs.to(device)
+        global_view = augment(batched_graph, mask_id=vocab.get_unk_id())
         with torch.no_grad():
-            z, _ = model(batched_graph)
+            z, _ = model(global_view)
             scores = z @ prototypes
-            q = sinkhorn(scores)
+            q = uot_sinkhorn_gpu(scores)
             cluster_ids = q.argmax(dim=1)
             all_cluster_ids.extend(cluster_ids.cpu().numpy().tolist())
-    logging.info("Obtained cluster IDs. Generating groups...")
+    logging.info("Obtained cluster IDs. Merging small clusters...")
+    all_cluster_ids = get_merged_clusters(all_cluster_ids, prototypes, min_size=config.hyper_parameters.batch_size)
+    
+    logging.info("Finalized cluster IDs. Generating groups...")
     cluster_id_maps = defaultdict(list)
     for idx, cluster_id in enumerate(tqdm(all_cluster_ids)):
         cluster_id_maps[f"{cluster_id}"].append(idx)
@@ -241,11 +366,13 @@ if __name__ == "__main__":
         json.dump(swav_multicrop_batches, wfo)
 
     logging.info(f"Saving model...")
-    torch.save(model.state_dict(), config.swav.model_save_path)
-    logging.info(f"Model saved to {config.swav.model_save_path}")
+    model_save_path = join(dataset_root, config.swav.model_save_path)
+    torch.save(model.state_dict(), model_save_path)
+    logging.info(f"Model saved to {model_save_path}")
     logging.info(f"Saving prototypes...")
-    torch.save(prototypes.data, config.swav.prototypes_save_path)
-    logging.info(f"Prototypes saved to {config.swav.prototypes_save_path}")
+    prototypes_save_path = join(dataset_root, config.swav.prototypes_save_path)
+    torch.save(prototypes.data, prototypes_save_path)
+    logging.info(f"Prototypes saved to {prototypes_save_path}")
 
     logging.info(f"Completed.")
     logging.info("=========End session=========")

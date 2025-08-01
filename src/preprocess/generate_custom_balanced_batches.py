@@ -330,14 +330,10 @@ if __name__ == "__main__":
         USE_CPU = min(config.num_workers, cpu_count())
     else:
         USE_CPU = cpu_count()
-
+        
+    dataset_root = join(config.data_folder, config.dataset.name)
     if args.use_temp_data:
         dataset_root = config.temp_root
-    else:
-        dataset_root = config.data_folder
-    
-    if config.dataset.name == "Devign":
-        dataset_root = join(config.data_folder, config.dataset.name)
     
     train_dataset_path = join(dataset_root, config.train_slices_filename)
     logging.info(f"Loading training dataset from {train_dataset_path}")

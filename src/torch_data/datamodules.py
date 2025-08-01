@@ -25,13 +25,9 @@ class SliceDataModule(LightningDataModule):
         else:
             self.__n_workers = cpu_count()
         
+        self.__dataset_root = join(self.__config.data_folder, self.__config.dataset.name)
         if use_temp_data:
             self.__dataset_root = self.__config.temp_root
-        else:
-            self.__dataset_root = self.__config.data_folder
-        
-        if self.__config.dataset.name == "Devign":
-            self.__dataset_root = join(self.__config.data_folder, self.__config.dataset.name)
 
     @staticmethod
     def collate_wrapper(batch: List[SliceGraphSample]) -> SliceGraphBatch:

@@ -65,10 +65,9 @@ if __name__ == "__main__":
     else:
         USE_CPU = cpu_count()
 
+    dataset_root = join(config.data_folder, config.dataset.name)
     if args.use_temp_data:
         dataset_root = config.temp_root
-    else:
-        dataset_root = config.data_folder
     
     train_slices_filepath = join(dataset_root, config.train_slices_filename)
     logging.info(f"Loading train slices from {train_slices_filepath}...")
@@ -78,9 +77,9 @@ if __name__ == "__main__":
 
     filename_map = defaultdict(set)
 
-    for feat_name in all_feats_name:
+    for feat_name in config.vul_feats:
         logging.info(f"Processing {feat_name}...")
-        feat_dir = join(dataset_root, config.VF_perts_root, feat_name)
+        feat_dir = join(dataset_root, feat_name)
 
         feat_slices = [slice_path for slice_path in train_slices if slice_path.startswith(feat_dir)]
         logging.info(f"Found {len(feat_slices)} slices for {feat_name}.")
