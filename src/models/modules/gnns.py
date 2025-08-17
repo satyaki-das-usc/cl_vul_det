@@ -1,7 +1,7 @@
 from omegaconf import DictConfig
 import torch
 from torch_geometric.data import Batch
-from torch_geometric.nn import TopKPooling, GCNConv, GINEConv, GATv2Conv, GatedGraphConv, GlobalAttention
+from torch_geometric.nn import TopKPooling, GCNConv, GINEConv, GATv2Conv, GatedGraphConv, GlobalAttention, BatchNorm
 from torch_geometric.utils import subgraph
 import torch.nn.functional as F
 
@@ -121,82 +121,52 @@ class GINEConvEncoder(torch.nn.Module):
                  vocabulary_size: int,
                  pad_idx: int):
         super(GINEConvEncoder, self).__init__()
-        self.__config = config
-        self.__pad_idx = pad_idx
-        self.__st_embedding = STEncoder(config, vocab, vocabulary_size, pad_idx)
+        self.encoder = STEncoder(config, vocab, vocabulary_size, pad_idx)
+        self.hidden = config.hidden_size
+        self.edge_dim = config.edge_dim
 
-        self.input_GCL = GINEConv(
-            nn=torch.nn.Sequential(
-                torch.nn.Linear(config.rnn.hidden_size, config.hidden_size),
-                torch.nn.ReLU(),
-                torch.nn.Linear(config.hidden_size, config.hidden_size)
-            ),
-            edge_dim=config.edge_dim
-        )
+        # Build sequence of conv/pool layers with skip and gating
+        self.convs = torch.nn.ModuleList()
+        self.pools = torch.nn.ModuleList()
+        self.bns = torch.nn.ModuleList()
 
-        self.input_GPL = TopKPooling(config.hidden_size,
-                                     ratio=config.pooling_ratio)
+        in_dim = config.gnn.rnn.hidden_size  # from STEncoder
+        num_layers = config.gnn.n_hidden_layers
 
-        for i in range(config.n_hidden_layers - 1):
-            setattr(self, f"hidden_GCL{i}",
-                    GINEConv(
-            nn=torch.nn.Sequential(
-                torch.nn.Linear(config.rnn.hidden_size, config.hidden_size),
-                torch.nn.ReLU(),
-                torch.nn.Linear(config.hidden_size, config.hidden_size)
-            ),
-            edge_dim=2
-        ))
-            setattr(
-                self, f"hidden_GPL{i}",
-                TopKPooling(config.hidden_size,
-                            ratio=config.pooling_ratio))
-
-        self.attpool = GlobalAttention(torch.nn.Linear(config.hidden_size, 1))
+        for _ in range(num_layers):
+            self.convs.append(GINEConv(
+                nn=torch.nn.Sequential(
+                    torch.nn.Linear(in_dim, self.hidden),
+                    torch.nn.ReLU(),
+                    torch.nn.Linear(self.hidden, self.hidden)
+                ),
+                edge_dim=self.edge_dim  # ensure edge_feature→node_dim alignment
+            ))
+            self.bns.append(BatchNorm(self.hidden))
+            self.pools.append(TopKPooling(self.hidden, ratio=config.gnn.pooling_ratio))
+            in_dim = self.hidden
+        
+        self.global_att = GlobalAttention(torch.nn.Linear(self.hidden, 1))
 
     def forward(self, batched_graph: Batch):
-        # [n nodes; rnn hidden]
-        node_embedding = self.__st_embedding(batched_graph.x)
-        edge_index = batched_graph.edge_index
-        edge_attr = batched_graph.edge_attr.float()
-        batch = batched_graph.batch
+        x = self.encoder(batched_graph.x)
+        edge_index, edge_attr, batch = batched_graph.edge_index, batched_graph.edge_attr, batched_graph.batch
 
-        # Pass edge_attr to TopKPooling
+        out = 0
+        for conv, bn, pool in zip(self.convs, self.bns, self.pools):
+            res = x
+            x = conv(x, edge_index, edge_attr)
+            x = bn(x)
+            x = F.relu(x)
+            x = F.dropout(x, p=0.1, training=self.training)
 
-        # node_embedding = F.relu(self.input_GCL(node_embedding, edge_index))
-        node_embedding = F.relu(self.input_GCL(node_embedding, edge_index, edge_attr))
-        node_embedding_pooled, edge_index_pooled, _, batch_pooled, perm, score = self.input_GPL(node_embedding, edge_index, None, batch)
-        edge_index_pooled, edge_attr_pooled = subgraph(
-            subset=perm,
-            edge_index=edge_index,
-            edge_attr=edge_attr,
-            relabel_nodes=True,
-            num_nodes=node_embedding.size(0)
-        )
-        node_embedding, edge_index, edge_attr, batch = node_embedding_pooled, edge_index_pooled, edge_attr_pooled, batch_pooled
-        # node_embedding, edge_index, edge_attr, batch, _, _ = self.input_GPL(node_embedding, edge_index, edge_attr, batch)
+            x, edge_index, edge_attr, batch, _, _ = pool(x, edge_index, edge_attr, batch)
+            # TopKPooling returns pooled edge_attr — no need for manual subgraph()
 
-        # [n_SliceGraph; SliceGraph hidden dim]
-        out = self.attpool(node_embedding, batch)
-        for i in range(self.__config.n_hidden_layers - 1):
-            # node_embedding = F.relu(getattr(self, f"hidden_GCL{i}")(node_embedding, edge_index))
-            node_embedding = F.relu(self.input_GCL(node_embedding, edge_index, edge_attr))
-            node_embedding_pooled, edge_index_pooled, _, batch_pooled, perm, score = getattr(self, f"hidden_GPL{i}")(
-                node_embedding, edge_index, None, batch)
-            edge_index_pooled, edge_attr_pooled = subgraph(
-                subset=perm,
-                edge_index=edge_index,
-                edge_attr=edge_attr,
-                relabel_nodes=True,
-                num_nodes=node_embedding.size(0)
-            )
-            node_embedding, edge_index, edge_attr, batch = node_embedding_pooled, edge_index_pooled, edge_attr_pooled, batch_pooled
-            # node_embedding, edge_index, edge_attr, batch, _, _ = getattr(self, f"hidden_GPL{i}")(
-            #     node_embedding, edge_index, edge_attr, batch)
-            out += self.attpool(node_embedding, batch)
+            out += self.global_att(x, batch)  # residual-summed graph vector
+            x = x + res  # skip connection
 
-        # [n_SliceGraph; SliceGraph hidden dim]
-        return out
+        return out  # graph-level embeddings
 
 class GraphSwAVModel(torch.nn.Module):
 
@@ -219,7 +189,7 @@ class GraphSwAVModel(torch.nn.Module):
         )
 
     def forward(self, batch: Batch):
-        graph_activations = self.__graph_encoder(batch)  # [num_graphs, hidden_dim]
+        graph_activations = self.__graph_encoder(batch)
         logits = self.projection_head(graph_activations)
         logits = F.normalize(logits, dim=-1)
-        return logits, graph_activations  # [num_graphs, num_clusters]
+        return logits, graph_activations
