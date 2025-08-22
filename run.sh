@@ -42,7 +42,8 @@ PYTHONPATH="." python src/preprocess/word_embedding.py &&
 PYTHONPATH="." python src/preprocess/split_dataset.py &&
 PYTHONPATH="." python src/preprocess/generate_instance_perturbation_mapping.py &&
 PYTHONPATH="." python src/preprocess/generate_swav_batches.py &&
-PYTHONPATH="." python src/preprocess/generate_multicrop_swav_batches.py
+PYTHONPATH="." python src/preprocess/generate_multicrop_swav_batches.py &&
+PYTHONPATH="." python src/preprocess/generate_multicrop_swav_batches.py --do_train
 # PYTHONPATH="." python src/preprocess/split_large_batches.py
 
 
