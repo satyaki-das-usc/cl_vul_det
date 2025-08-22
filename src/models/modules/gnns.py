@@ -154,17 +154,15 @@ class GINEConvEncoder(torch.nn.Module):
 
         out = 0
         for conv, bn, pool in zip(self.convs, self.bns, self.pools):
-            res = x
-            x = conv(x, edge_index, edge_attr)
+            x = conv(x, edge_index, edge_attr.float())
             x = bn(x)
             x = F.relu(x)
             x = F.dropout(x, p=0.1, training=self.training)
 
-            x, edge_index, edge_attr, batch, _, _ = pool(x, edge_index, edge_attr, batch)
+            x, edge_index, edge_attr, batch, _, _ = pool(x, edge_index, edge_attr.float(), batch)
             # TopKPooling returns pooled edge_attr — no need for manual subgraph()
 
             out += self.global_att(x, batch)  # residual-summed graph vector
-            x = x + res  # skip connection
 
         return out  # graph-level embeddings
 
