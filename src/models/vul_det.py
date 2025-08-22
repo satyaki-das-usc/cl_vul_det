@@ -9,6 +9,7 @@ import torch.nn.functional as F
 
 from src.torch_data.samples import SliceGraphBatch
 from src.models.modules.gnns import GraphConvEncoder, GatedGraphConvEncoder, GINEConvEncoder, GraphSwAVModel
+from src.models.modules.losses import OrthogonalProjectionLoss
 from src.metrics import Statistic
 from torch_geometric.data import Batch
 from src.vocabulary import Vocabulary
@@ -197,7 +198,10 @@ class CLVulDet(LightningModule):
         logits, activations, graph_activations = self(batch.graphs)
         # loss = F.cross_entropy(logits, batch.labels)
         
-        contrastive_loss = self.get_contrastive_loss(activations, batch.labels)
+        # contrastive_loss = self.get_contrastive_loss(activations, batch.labels)
+        contrastive_criterion = OrthogonalProjectionLoss()
+        contrastive_loss = contrastive_criterion(activations, batch.labels)
+        # contrastive_loss = self.get_contrastive_loss(activations, batch.labels)
         ce_loss = F.cross_entropy(logits, batch.labels)
 
         if self.current_epoch < self.__config.hyper_parameters.contrastive_warmup_epochs:

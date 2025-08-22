@@ -27,3 +27,43 @@ class InfoNCEContrastiveLoss(nn.Module):
 
         loss = -(torch.log(pos / denom)).mean()
         return loss
+
+class OrthogonalProjectionLoss(torch.nn.Module):
+    def __init__(self, gamma: float = 1.0):
+        super().__init__()
+        self.gamma = gamma  # scales the inter-class term
+
+    def forward(self, features: torch.Tensor, targets: torch.Tensor):
+        """
+        features: tensor of shape (batch_size, feature_dim)
+        targets: tensor of shape (batch_size,) with class indices
+        """
+        # Normalize features for cosine similarity
+        features = F.normalize(features, dim=1)
+        batch_size = features.size(0)
+
+        # Create a similarity matrix: (batch_size, batch_size)
+        sim_matrix = features @ features.t()
+
+        # Masks for same-class and different-class pairs
+        targets = targets.view(-1, 1)
+        same_mask = targets == targets.t()
+        diff_mask = ~same_mask
+
+        # Exclude self-similarity for same-class computations
+        diag_mask = torch.eye(batch_size, dtype=torch.bool, device=features.device)
+        same_mask = same_mask & ~diag_mask
+
+        # Compute mean similarities
+        if same_mask.sum() > 0:
+            s = sim_matrix[same_mask].mean()
+        else:
+            s = torch.tensor(1.0, device=features.device)
+
+        if diff_mask.sum() > 0:
+            d = sim_matrix[diff_mask].mean()
+        else:
+            d = torch.tensor(0.0, device=features.device)
+
+        loss_opl = (1 - s) + self.gamma * d.abs()
+        return loss_opl
