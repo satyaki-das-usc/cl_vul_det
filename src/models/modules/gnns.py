@@ -130,8 +130,8 @@ class GINEConvEncoder(torch.nn.Module):
         self.pools = torch.nn.ModuleList()
         self.bns = torch.nn.ModuleList()
 
-        in_dim = config.gnn.rnn.hidden_size  # from STEncoder
-        num_layers = config.gnn.n_hidden_layers
+        in_dim = config.rnn.hidden_size  # from STEncoder
+        num_layers = config.n_hidden_layers
 
         for _ in range(num_layers):
             self.convs.append(GINEConv(
@@ -143,7 +143,7 @@ class GINEConvEncoder(torch.nn.Module):
                 edge_dim=self.edge_dim  # ensure edge_feature→node_dim alignment
             ))
             self.bns.append(BatchNorm(self.hidden))
-            self.pools.append(TopKPooling(self.hidden, ratio=config.gnn.pooling_ratio))
+            self.pools.append(TopKPooling(self.hidden, ratio=config.pooling_ratio))
             in_dim = self.hidden
         
         self.global_att = GlobalAttention(torch.nn.Linear(self.hidden, 1))
