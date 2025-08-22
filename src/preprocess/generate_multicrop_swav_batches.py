@@ -291,7 +291,8 @@ if __name__ == "__main__":
                 V = len(zs) - 2
                 for i in global_idxs:
                     for j in range(len(zs)):
-                        if j == i: continue
+                        if j == i:
+                            continue
                         swav_loss += -(qs[j] * ps[i].log()).sum(dim=1).mean()
                 swav_loss = swav_loss / (len(global_idxs) * (1 + V))
 
