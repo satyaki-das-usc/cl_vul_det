@@ -275,6 +275,9 @@ if __name__ == "__main__":
             random.shuffle(sample_list)
             progress_bar = tqdm(range(0, len(sample_list), BATCH_SIZE))
 
+            epoch_swav_losses = []
+            epoch_contrast_losses = []
+
             for i in progress_bar:
                 batched_graph = SliceGraphBatch(sample_list[i:i + BATCH_SIZE])
                 batched_graph = batched_graph.graphs.to(device)
@@ -301,6 +304,9 @@ if __name__ == "__main__":
                 
                 loss = swav_loss + config.swav.contrastive.lambda_h * contrastive_loss
 
+                epoch_swav_losses.append(swav_loss.item())
+                epoch_contrast_losses.append(contrastive_loss.item())
+
                 swav_losses.append(swav_loss.item())
                 contrast_losses.append(contrastive_loss.item())
                 progress_bar.set_postfix({
@@ -313,7 +319,8 @@ if __name__ == "__main__":
                 optimizer.step()
                 with torch.no_grad():
                     prototypes.data = F.normalize(prototypes.data, dim=0)
-            # scheduler.step()    
+            # scheduler.step()
+            logging.info(f"Epoch {epoch + 1} - SwAV Loss: {np.mean(epoch_swav_losses):.4f}, Contrastive Loss: {np.mean(epoch_contrast_losses):.4f}")
 
         plt.plot(swav_losses, label='SwAV Loss')
         plt.plot(contrast_losses, label='Contrastive Loss')
