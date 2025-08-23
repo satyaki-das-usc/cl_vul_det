@@ -175,16 +175,13 @@ if __name__ == "__main__":
     data_module = SliceDataModule(config, vocab, train_sampler=train_sampler, use_temp_data=args.use_temp_data)
     logging.info("Data module loading completed.")
 
-    graph_encoder = None
+    pretrained_graph_encoder_path = None
     if sampler == "swav":
-        graph_encoder = GraphSwAVModel(config, vocab, vocab_size, pad_idx)
-        checkpoint = torch.load(join(dataset_root, config.swav.model_save_path), map_location=device)
-        graph_encoder.load_state_dict(checkpoint)
-        graph_encoder = graph_encoder.to(device)
+        pretrained_graph_encoder_path = join(dataset_root, config.swav.model_save_path)
     
     if args.no_cl:
-        model = NoCLVulDet(config, vocab, vocab_size, pad_idx, graph_encoder=graph_encoder)
+        model = NoCLVulDet(config, vocab, vocab_size, pad_idx, pretrained_graph_encoder_path=pretrained_graph_encoder_path)
     else:
-        model = CLVulDet(config, vocab, vocab_size, pad_idx, graph_encoder=graph_encoder)
+        model = CLVulDet(config, vocab, vocab_size, pad_idx, pretrained_graph_encoder_path=pretrained_graph_encoder_path)
 
     train(model, data_module, config)

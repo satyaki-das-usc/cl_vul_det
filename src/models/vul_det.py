@@ -45,9 +45,9 @@ class CLVulDet(LightningModule):
     """
 
     def __init__(self, config: DictConfig, vocab: Vocabulary, vocabulary_size: int,
-                 pad_idx: int, graph_encoder: GraphSwAVModel = None):
+                 pad_idx: int, pretrained_graph_encoder_path: str = None):
         super().__init__()
-        if graph_encoder is not None:
+        if pretrained_graph_encoder_path is not None:
             self.save_hyperparameters(ignore=["graph_encoder"])
         else:
             self.save_hyperparameters()
@@ -55,13 +55,24 @@ class CLVulDet(LightningModule):
         self.__config = config
         hidden_size = config.classifier.hidden_size
         self.trainable_parameters = []
-        if graph_encoder is not None:
-            self.__graph_encoder = nn.Sequential(*list(graph_encoder.children())[:-1])
+        self.__graph_encoder = encoders[config.gnn.name](config.gnn, vocab, vocabulary_size,
+                                                               pad_idx)
+        if pretrained_graph_encoder_path is not None:
+            loaded_state_dict = torch.load(pretrained_graph_encoder_path, map_location=self.device)
+            pretrained_states = dict()
+            for key, value in loaded_state_dict.items():
+                if "__graph_encoder" not in key:
+                    continue
+                transfer_key = key.replace("GraphSwAVModel", "CLVulDet")
+                pretrained_states[transfer_key] = value
+                
+            model_state = self.state_dict()
+            model_state.update(pretrained_states)
+            self.load_state_dict(model_state)
+            
             for param in self.__graph_encoder.parameters():
                 param.requires_grad = False
         else:
-            self.__graph_encoder = encoders[config.gnn.name](config.gnn, vocab, vocabulary_size,
-                                                               pad_idx)
             self.trainable_parameters += [self.__graph_encoder.parameters()]
         # hidden layers
         layers = [
@@ -322,9 +333,9 @@ class NoCLVulDet(LightningModule):
     """
 
     def __init__(self, config: DictConfig, vocab: Vocabulary, vocabulary_size: int,
-                 pad_idx: int, graph_encoder: GraphSwAVModel = None):
+                 pad_idx: int, pretrained_graph_encoder_path: str = None):
         super().__init__()
-        if graph_encoder is not None:
+        if pretrained_graph_encoder_path is not None:
             self.save_hyperparameters(ignore=["graph_encoder"])
         else:
             self.save_hyperparameters()
@@ -332,13 +343,24 @@ class NoCLVulDet(LightningModule):
         self.__config = config
         hidden_size = config.classifier.hidden_size
         self.trainable_parameters = []
-        if graph_encoder is not None:
-            self.__graph_encoder = nn.Sequential(*list(graph_encoder.children())[:-1])
+        self.__graph_encoder = encoders[config.gnn.name](config.gnn, vocab, vocabulary_size,
+                                                               pad_idx)
+        if pretrained_graph_encoder_path is not None:
+            loaded_state_dict = torch.load(pretrained_graph_encoder_path, map_location=self.device)
+            pretrained_states = dict()
+            for key, value in loaded_state_dict.items():
+                if "__graph_encoder" not in key:
+                    continue
+                transfer_key = key.replace("GraphSwAVModel", "NoCLVulDet")
+                pretrained_states[transfer_key] = value
+                
+            model_state = self.state_dict()
+            model_state.update(pretrained_states)
+            self.load_state_dict(model_state)
+            
             for param in self.__graph_encoder.parameters():
                 param.requires_grad = False
         else:
-            self.__graph_encoder = encoders[config.gnn.name](config.gnn, vocab, vocabulary_size,
-                                                               pad_idx)
             self.trainable_parameters += [self.__graph_encoder.parameters()]
         # hidden layers
         layers = [
