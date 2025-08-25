@@ -70,10 +70,10 @@ class CLVulDet(LightningModule):
             model_state.update(pretrained_states)
             self.load_state_dict(model_state)
             
-            for param in self.__graph_encoder.parameters():
-                param.requires_grad = False
-        else:
-            self.trainable_parameters += [self.__graph_encoder.parameters()]
+            # for param in self.__graph_encoder.parameters():
+            #     param.requires_grad = False
+        # else:
+        self.trainable_parameters += [self.__graph_encoder.parameters()]
         # hidden layers
         layers = [
             nn.Linear(config.gnn.hidden_size, hidden_size),
