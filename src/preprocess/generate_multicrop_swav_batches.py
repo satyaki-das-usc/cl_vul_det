@@ -200,7 +200,7 @@ def get_merged_clusters(cluster_ids: List[int], prototypes, min_size: int = 2) -
 if __name__ == "__main__":
     arg_parser = get_arg_parser()
     arg_parser.add_argument("--do_train", action="store_true", help="Enable training; if not set, use pretrained model.")
-    arg_parser.add_argument("--global_view_indices", type=int, nargs="+", default=[0, 1],
+    arg_parser.add_argument("--views_for_assign", type=int, nargs="+", default=[0, 1],
                     help="list of global view indices used for computing assignments")
     args = arg_parser.parse_args()
     init_log()
@@ -284,24 +284,28 @@ if __name__ == "__main__":
                 with torch.no_grad():
                     prototypes.data = F.normalize(prototypes.data, dim=0)
                 
+                with torch.no_grad():
+                    prototypes.data = F.normalize(prototypes.data, dim=0)
+                
                 batched_graph = SliceGraphBatch(sample_list[i:i + BATCH_SIZE])
                 batched_graph = batched_graph.graphs.to(device)
                 views = augment_multicrop(batched_graph, mask_id=vocab.get_unk_id(), n_local_views=4)
                 zs, features = zip(*(model(v) for v in views))
                 output = [z @ prototypes for z in zs]
+                output = [z @ prototypes for z in zs]
 
                 swav_loss = 0
-                for view_idx in args.global_view_indices:
+                for view_id in args.views_for_assign:
                     with torch.no_grad():
-                        out = output[view_idx].detach()
+                        out = output[view_id].detach()
                         # q = sinkhorn(out)
                         q = uot_sinkhorn_gpu(out)
                     subloss = 0
-                    for v in np.delete(np.arange(len(output)), view_idx):
+                    for v in np.delete(np.arange(len(output)), view_id):
                         x = output[v] / config.swav.temperature
                         subloss -= torch.mean(torch.sum(q * F.log_softmax(x, dim=-1), dim=-1))
                     swav_loss += subloss / (len(output) - 1)
-                swav_loss /= len(args.global_view_indices)
+                swav_loss /= len(args.views_for_assign)
 
                 h1, h2 = F.normalize(features[0], dim=-1), F.normalize(features[1], dim=-1)
                 contrastive_loss = contrastive_criterion(h1, h2)
