@@ -200,6 +200,8 @@ def get_merged_clusters(cluster_ids: List[int], prototypes, min_size: int = 2) -
 if __name__ == "__main__":
     arg_parser = get_arg_parser()
     arg_parser.add_argument("--do_train", action="store_true", help="Enable training; if not set, use pretrained model.")
+    arg_parser.add_argument("--global_view_indices", type=int, nargs="+", default=[0, 1],
+                    help="list of global view indices used for computing assignments")
     args = arg_parser.parse_args()
     init_log()
 
@@ -279,27 +281,27 @@ if __name__ == "__main__":
             epoch_contrast_losses = []
 
             for i in progress_bar:
+                with torch.no_grad():
+                    prototypes.data = F.normalize(prototypes.data, dim=0)
+                
                 batched_graph = SliceGraphBatch(sample_list[i:i + BATCH_SIZE])
                 batched_graph = batched_graph.graphs.to(device)
                 views = augment_multicrop(batched_graph, mask_id=vocab.get_unk_id(), n_local_views=4)
                 zs, features = zip(*(model(v) for v in views))
-                scores = [z @ prototypes for z in zs]
-                with torch.no_grad():
-                    # qs = [sinkhorn(s) for s in scores]
-                    qs = [uot_sinkhorn_gpu(s) for s in scores]
-                # ps = [F.softmax(s / config.swav.temperature, dim=1) for s in scores]
+                output = [z @ prototypes for z in zs]
 
                 swav_loss = 0
-                global_idxs = [0, 1]
-                for i in global_idxs:
+                for view_idx in args.global_view_indices:
+                    with torch.no_grad():
+                        out = output[view_idx].detach()
+                        # q = sinkhorn(out)
+                        q = uot_sinkhorn_gpu(out)
                     subloss = 0
-                    for j in range(len(zs)):
-                        if j == i:
-                            continue
-                        x = scores[i] / config.swav.temperature
-                        subloss -= torch.mean(torch.sum(qs[j] * F.log_softmax(x, dim=-1), dim=-1))
-                    swav_loss += subloss / (len(zs) - 1)
-                swav_loss /= len(global_idxs)
+                    for v in np.delete(np.arange(len(output)), view_idx):
+                        x = output[v] / config.swav.temperature
+                        subloss -= torch.mean(torch.sum(q * F.log_softmax(x, dim=-1), dim=-1))
+                    swav_loss += subloss / (len(output) - 1)
+                swav_loss /= len(args.global_view_indices)
 
                 h1, h2 = F.normalize(features[0], dim=-1), F.normalize(features[1], dim=-1)
                 contrastive_loss = contrastive_criterion(h1, h2)
@@ -319,8 +321,6 @@ if __name__ == "__main__":
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-                with torch.no_grad():
-                    prototypes.data = F.normalize(prototypes.data, dim=0)
             # scheduler.step()
             logging.info(f"Epoch {epoch + 1} - SwAV Loss: {np.mean(epoch_swav_losses):.4f}, Contrastive Loss: {np.mean(epoch_contrast_losses):.4f}")
 
