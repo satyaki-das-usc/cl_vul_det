@@ -287,17 +287,19 @@ if __name__ == "__main__":
                 with torch.no_grad():
                     # qs = [sinkhorn(s) for s in scores]
                     qs = [uot_sinkhorn_gpu(s) for s in scores]
-                ps = [F.softmax(s / config.swav.temperature, dim=1) for s in scores]
+                # ps = [F.softmax(s / config.swav.temperature, dim=1) for s in scores]
 
                 swav_loss = 0
                 global_idxs = [0, 1]
-                V = len(zs) - 2
                 for i in global_idxs:
+                    subloss = 0
                     for j in range(len(zs)):
                         if j == i:
                             continue
-                        swav_loss += -(qs[j] * ps[i].log()).sum(dim=1).mean()
-                swav_loss = swav_loss / (len(global_idxs) * (1 + V))
+                        x = scores[i] / config.swav.temperature
+                        subloss -= torch.mean(torch.sum(qs[j] * F.log_softmax(x, dim=-1), dim=-1))
+                    swav_loss += subloss / (len(zs) - 1)
+                swav_loss /= len(global_idxs)
 
                 h1, h2 = F.normalize(features[0], dim=-1), F.normalize(features[1], dim=-1)
                 contrastive_loss = contrastive_criterion(h1, h2)
