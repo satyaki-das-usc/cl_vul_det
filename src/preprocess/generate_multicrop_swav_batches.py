@@ -284,9 +284,6 @@ if __name__ == "__main__":
                 with torch.no_grad():
                     prototypes.data = F.normalize(prototypes.data, dim=0)
                 
-                with torch.no_grad():
-                    prototypes.data = F.normalize(prototypes.data, dim=0)
-                
                 batched_graph = SliceGraphBatch(sample_list[i:i + BATCH_SIZE])
                 batched_graph = batched_graph.graphs.to(device)
                 views = augment_multicrop(batched_graph, mask_id=vocab.get_unk_id(), n_local_views=4)
