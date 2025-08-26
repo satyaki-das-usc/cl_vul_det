@@ -2,11 +2,8 @@ import random
 import os
 import json
 import torch
-import ot
 import numpy as np
-import networkx as nx
 import matplotlib.pyplot as plt
-
 
 import logging
 
@@ -20,8 +17,6 @@ from collections import defaultdict
 
 from pytorch_lightning import seed_everything
 
-from torch_geometric.data import Batch, Data
-from torch_geometric.utils import dropout_node, dropout_edge, k_hop_subgraph
 import torch.nn.functional as F
 
 from src.common_utils import get_arg_parser
@@ -31,6 +26,9 @@ from src.torch_data.samples import SliceGraphSample, SliceGraphBatch
 
 from src.models.modules.gnns import GraphSwAVModel
 from src.models.modules.losses import InfoNCEContrastiveLoss
+
+from src.swav.assignment_protocols import sinkhorn, uot_sinkhorn_gpu
+from src.swav.graph_augmentations import augment, augment_multicrop
 
 def init_log():
     LOG_DIR = "logs"
@@ -47,126 +45,6 @@ def init_log():
         datefmt='%Y-%m-%d %H:%M:%S')
     logging.info("=========New session=========")
     logging.info(f"Logging dir: {LOG_DIR}")
-
-def random_node_drop(batch: Batch, p: float = 0.1) -> Batch:
-    """
-    Apply random node drop per graph in the batch—but only when
-    at least one node remains. Otherwise keep original graph.
-    """
-    all_perturbed_graphs = []
-    for graph_data in batch.to_data_list():
-        num_nodes = graph_data.num_nodes
-        edge_index, edge_mask, node_mask = dropout_node(
-            graph_data.edge_index,
-            p=p,
-            num_nodes=num_nodes,
-            training=True,
-            relabel_nodes=True
-        )
-        # If all nodes dropped => skip augmentation
-        if node_mask.sum().item() < 1:
-            all_perturbed_graphs.append(graph_data)
-            continue
-
-        x = graph_data.x[node_mask]
-        edge_attr = None
-        if graph_data.edge_attr is not None:
-            edge_attr = graph_data.edge_attr[edge_mask]
-        new_data = Data(
-            x=x,
-            edge_index=edge_index,
-            edge_attr=edge_attr
-        )
-        all_perturbed_graphs.append(new_data)
-
-    return Batch.from_data_list(all_perturbed_graphs)
-
-def random_edge_drop(batch: Batch, p: float = 0.1) -> Batch:
-    """Randomly drop edges from each graph in the batch with probability p."""
-    edge_index, edge_mask = dropout_edge(batch.edge_index, p=p, training=True, force_undirected=False)
-    new_batch = batch.clone()
-    new_batch.edge_index = edge_index
-    if batch.edge_attr is not None:
-        new_batch.edge_attr = new_batch.edge_attr[edge_mask]
-    return new_batch
-
-def attribute_mask(batch: Batch, mask_id: int, mask_rate: float = 0.1, node_feature_name='x') -> Batch:
-    """Randomly mask node features in the batch with probability mask_rate."""
-    new_batch = batch.clone()
-    mask = torch.rand(new_batch.num_nodes, device=new_batch.x.device) < mask_rate
-    new_batch.x = new_batch.x.clone()
-    new_batch.x[mask] = mask_id  # or any masking value
-    return new_batch
-
-def augment(batch: Batch, mask_id: int) -> Batch:
-    """Compose augmentations to produce a random view of the batch."""
-    batch_aug = random_node_drop(batch, p=0.1)
-    batch_aug = random_edge_drop(batch_aug, p=0.1)
-    batch_aug = attribute_mask(batch_aug, mask_id, mask_rate=0.1)
-    return batch_aug
-
-def subgraph_crop(batch: Batch, num_hops: int = 2, ratio: float = 0.5) -> Batch:
-    all_subgraphs = []
-    for graph_data in batch.to_data_list():
-        num_nodes = graph_data.num_nodes
-        keep = max(1, int(num_nodes * ratio))
-        seed = torch.randperm(num_nodes)[:keep]
-        subset, edge_index_sub, mapping, edge_mask = k_hop_subgraph(seed, num_hops, graph_data.edge_index, relabel_nodes=True)
-        subgraph = Data(x=graph_data.x[subset],
-                   edge_index=edge_index_sub,
-                   edge_attr=graph_data.edge_attr[edge_mask])
-        all_subgraphs.append(subgraph)
-
-    return Batch.from_data_list(all_subgraphs)
-
-def augment_multicrop(batch: Batch,
-                      mask_id: int,
-                      nmb_views: List[int]) -> List[Batch]:
-    """
-    Generate multiple views per batch for SwAV-style multi-crop:
-    - 2 global augmented views
-    - n_local_views subgraph-cropped views
-    """
-    views = []
-    # Global augmented views
-    for _ in range(nmb_views[0]):
-        views.append(augment(batch, mask_id=mask_id))
-
-    # Local subgraph views
-    for _ in range(nmb_views[1]):
-        crop = subgraph_crop(batch)
-        crop_aug = augment(crop, mask_id=mask_id)
-        views.append(crop_aug)
-    return views
-
-def sinkhorn(out, n_iters=3, epsilon=0.05):
-    Q = torch.exp(out / epsilon).t()
-    Q /= Q.sum()
-    for _ in range(n_iters):
-        Q /= Q.sum(dim=1, keepdim=True)
-        Q /= Q.sum(dim=0, keepdim=True)
-    return (Q / Q.sum(dim=0, keepdim=True)).t()
-
-def uot_sinkhorn_gpu(scores: torch.Tensor,
-                     epsilon=0.05,
-                     rho=0.5,
-                     n_iters=5):
-    """
-    GPU-only, batched unbalanced Sinkhorn-like updates.
-    scores: [B, K] = z @ prototypes
-    Returns Q: [B, K] soft assignment distributions.
-    """
-    Q = torch.exp(scores / epsilon)  # non-negative weights [B,K]
-    for _ in range(n_iters):
-        # Row update with relaxation: softly approach uniform mass
-        row_sum = Q.sum(dim=1, keepdim=True)
-        Q = Q / (row_sum + rho)
-        # Column update with relaxation
-        col_sum = Q.sum(dim=0, keepdim=True)
-        Q = Q / (col_sum + rho)
-    # Normalize rows to sum to one (softmax-like)
-    Q = Q / (Q.sum(dim=1, keepdim=True) + 1e-8)
-    return Q
 
 def get_merged_clusters(cluster_ids: List[int], prototypes, min_size: int = 2) -> List[int]:
     """
@@ -196,6 +74,11 @@ def get_merged_clusters(cluster_ids: List[int], prototypes, min_size: int = 2) -
                 break
     
     return cluster_ids_tensor.tolist()
+
+assignment_functions = {
+    "sinkhorn": sinkhorn,
+    "uot_sinkhorn": uot_sinkhorn_gpu
+}
 
 if __name__ == "__main__":
     arg_parser = get_arg_parser()
@@ -296,8 +179,7 @@ if __name__ == "__main__":
                 for view_id in args.views_for_assign:
                     with torch.no_grad():
                         out = output[view_id].detach()
-                        # q = sinkhorn(out)
-                        q = uot_sinkhorn_gpu(out)
+                        q = assignment_functions[config.swav.assignment_protocol](out)
                     subloss = 0
                     for v in np.delete(np.arange(np.sum(args.nmb_views)), view_id):
                         x = output[v] / config.swav.temperature
@@ -360,7 +242,7 @@ if __name__ == "__main__":
         with torch.no_grad():
             logits, _ = model(global_view)
             output = logits @ prototypes
-            q = uot_sinkhorn_gpu(output)
+            q = assignment_functions[config.swav.assignment_protocol](out)
             cluster_ids = q.argmax(dim=1)
             all_cluster_ids.extend(cluster_ids.cpu().numpy().tolist())
     logging.info("Obtained cluster IDs. Merging small clusters...")

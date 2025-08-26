@@ -76,6 +76,7 @@ swav:
   use_prototype_loss: true
   model_save_path: GraphSwAV.ckpt
   prototypes_save_path: GraphSwAV_prototypes.ckpt
+  assignment_protocol: uot_sinkhorn
 gnn:
   name: gine
   edge_dim: 2
