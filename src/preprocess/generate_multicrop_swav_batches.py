@@ -358,9 +358,9 @@ if __name__ == "__main__":
         batched_graph = batched_graph.graphs.to(device)
         global_view = augment(batched_graph, mask_id=vocab.get_unk_id())
         with torch.no_grad():
-            z, _ = model(global_view)
-            scores = z @ prototypes
-            q = uot_sinkhorn_gpu(scores)
+            logits, _ = model(global_view)
+            output = logits @ prototypes
+            q = uot_sinkhorn_gpu(output)
             cluster_ids = q.argmax(dim=1)
             all_cluster_ids.extend(cluster_ids.cpu().numpy().tolist())
     logging.info("Obtained cluster IDs. Merging small clusters...")
