@@ -121,19 +121,19 @@ def subgraph_crop(batch: Batch, num_hops: int = 2, ratio: float = 0.5) -> Batch:
 
 def augment_multicrop(batch: Batch,
                       mask_id: int,
-                      n_local_views: int = 2) -> List[Batch]:
+                      nmb_views: List[int]) -> List[Batch]:
     """
     Generate multiple views per batch for SwAV-style multi-crop:
     - 2 global augmented views
     - n_local_views subgraph-cropped views
     """
     views = []
-    # Two global augmented views
-    views.append(augment(batch, mask_id=mask_id))  # global view 1
-    views.append(augment(batch, mask_id=mask_id))  # global view 2
+    # Global augmented views
+    for _ in range(nmb_views[0]):
+        views.append(augment(batch, mask_id=mask_id))
 
     # Local subgraph views
-    for _ in range(n_local_views):
+    for _ in range(nmb_views[1]):
         crop = subgraph_crop(batch)
         crop_aug = augment(crop, mask_id=mask_id)
         views.append(crop_aug)
@@ -200,6 +200,8 @@ def get_merged_clusters(cluster_ids: List[int], prototypes, min_size: int = 2) -
 if __name__ == "__main__":
     arg_parser = get_arg_parser()
     arg_parser.add_argument("--do_train", action="store_true", help="Enable training; if not set, use pretrained model.")
+    arg_parser.add_argument("--nmb_views", type=int, default=[2, 6], nargs="+",
+                    help="list of number of views (example: [2, 6])")
     arg_parser.add_argument("--views_for_assign", type=int, nargs="+", default=[0, 1],
                     help="list of global view indices used for computing assignments")
     args = arg_parser.parse_args()
@@ -286,9 +288,9 @@ if __name__ == "__main__":
                 
                 batched_graph = SliceGraphBatch(sample_list[i:i + BATCH_SIZE])
                 batched_graph = batched_graph.graphs.to(device)
-                views = augment_multicrop(batched_graph, mask_id=vocab.get_unk_id(), n_local_views=4)
-                zs, features = zip(*(model(v) for v in views))
-                output = [z @ prototypes for z in zs]
+                inputs = augment_multicrop(batched_graph, mask_id=vocab.get_unk_id(), nmb_views=args.nmb_views)
+                logits, graph_activations = zip(*(model(inp) for inp in inputs))
+                output = [lg @ prototypes for lg in logits]
 
                 swav_loss = 0
                 for view_id in args.views_for_assign:
@@ -297,13 +299,13 @@ if __name__ == "__main__":
                         # q = sinkhorn(out)
                         q = uot_sinkhorn_gpu(out)
                     subloss = 0
-                    for v in np.delete(np.arange(len(output)), view_id):
+                    for v in np.delete(np.arange(np.sum(args.nmb_views)), view_id):
                         x = output[v] / config.swav.temperature
                         subloss -= torch.mean(torch.sum(q * F.log_softmax(x, dim=-1), dim=-1))
-                    swav_loss += subloss / (len(output) - 1)
+                    swav_loss += subloss / (np.sum(args.nmb_views) - 1)
                 swav_loss /= len(args.views_for_assign)
 
-                h1, h2 = F.normalize(features[0], dim=-1), F.normalize(features[1], dim=-1)
+                h1, h2 = F.normalize(graph_activations[0], dim=-1), F.normalize(graph_activations[1], dim=-1)
                 contrastive_loss = contrastive_criterion(h1, h2)
                 
                 loss = swav_loss + config.swav.contrastive.lambda_h * contrastive_loss
