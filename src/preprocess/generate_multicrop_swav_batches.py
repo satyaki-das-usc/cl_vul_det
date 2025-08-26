@@ -292,7 +292,6 @@ if __name__ == "__main__":
                 views = augment_multicrop(batched_graph, mask_id=vocab.get_unk_id(), n_local_views=4)
                 zs, features = zip(*(model(v) for v in views))
                 output = [z @ prototypes for z in zs]
-                output = [z @ prototypes for z in zs]
 
                 swav_loss = 0
                 for view_id in args.views_for_assign:
