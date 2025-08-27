@@ -82,7 +82,7 @@ assignment_functions = {
     "uot_sinkhorn": uot_sinkhorn_gpu
 }
 
-def train(sample_list, model, optimizer, epoch, batch_size=512):
+def train(sample_list, model, optimizer, epoch, args, batch_size=512):
     logging.info(f"Epoch {epoch + 1}")
     model.train()
     random.shuffle(sample_list)
@@ -194,7 +194,7 @@ if __name__ == "__main__":
 
     if args.do_train:
         for epoch in range(config.swav.n_epochs):
-            train(sample_list, model, optimizer, epoch, batch_size=config.swav.batch_size)
+            train(sample_list, model, optimizer, epoch, args, batch_size=config.swav.batch_size)
         
         plt.plot(swav_losses, label='SwAV Loss')
         plt.plot(contrast_losses, label='Contrastive Loss')
