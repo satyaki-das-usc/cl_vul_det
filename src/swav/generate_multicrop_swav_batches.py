@@ -4,6 +4,7 @@ import json
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+import math
 
 import logging
 
@@ -17,6 +18,7 @@ from collections import defaultdict
 from pytorch_lightning import seed_everything
 
 import torch.nn.functional as F
+from timm.optim.lars import Lars
 
 from src.common_utils import get_arg_parser
 from src.vocabulary import Vocabulary
@@ -82,7 +84,7 @@ assignment_functions = {
     "uot_sinkhorn": uot_sinkhorn_gpu
 }
 
-def train(sample_list, model, optimizer, epoch, args, batch_size=512):
+def train(sample_list, model, optimizer, epoch, lr_schedule, config, batch_size=512):
     logging.info(f"Epoch {epoch + 1}")
     model.train()
     random.shuffle(sample_list)
@@ -91,28 +93,33 @@ def train(sample_list, model, optimizer, epoch, args, batch_size=512):
     epoch_swav_losses = []
     epoch_contrast_losses = []
 
-    for i in progress_bar:
+    for it, offset in enumerate(progress_bar):
+        # update learning rate
+        iteration = epoch * len(sample_list) + it
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = lr_schedule[iteration]
+
         with torch.no_grad():
             w = model.prototypes.weight.data.clone()
             w = F.normalize(w, dim=1, p=2)
             model.prototypes.weight.copy_(w)
         
-        batched_graph = SliceGraphBatch(sample_list[i:i + batch_size])
+        batched_graph = SliceGraphBatch(sample_list[offset:offset + batch_size])
         batched_graph = batched_graph.graphs.to(device)
-        inputs = augment_multicrop(batched_graph, mask_id=vocab.get_unk_id(), nmb_views=args.nmb_views)
+        inputs = augment_multicrop(batched_graph, mask_id=vocab.get_unk_id(), nmb_views=config.swav.nmb_views)
         graph_activations, embeddings, output = zip(*(model(inp) for inp in inputs))
 
         swav_loss = 0
-        for view_id in args.views_for_assign:
+        for view_id in config.swav.views_for_assign:
             with torch.no_grad():
                 out = output[view_id].detach()
                 q = assignment_functions[config.swav.assignment_protocol](out)
             subloss = 0
-            for v in np.delete(np.arange(np.sum(args.nmb_views)), view_id):
+            for v in np.delete(np.arange(np.sum(config.swav.nmb_views)), view_id):
                 x = output[v] / config.swav.temperature
                 subloss -= torch.mean(torch.sum(q * F.log_softmax(x, dim=-1), dim=-1))
-            swav_loss += subloss / (np.sum(args.nmb_views) - 1)
-        swav_loss /= len(args.views_for_assign)
+            swav_loss += subloss / (np.sum(config.swav.nmb_views) - 1)
+        swav_loss /= len(config.swav.views_for_assign)
 
         h1, h2 = F.normalize(graph_activations[0], dim=-1), F.normalize(graph_activations[1], dim=-1)
         contrastive_loss = contrastive_criterion(h1, h2)
@@ -131,6 +138,11 @@ def train(sample_list, model, optimizer, epoch, args, batch_size=512):
 
         optimizer.zero_grad()
         loss.backward()
+        # cancel gradients for the prototypes
+        if iteration < config.swav.freeze_prototypes_niters:
+            for name, p in model.named_parameters():
+                if "prototypes" in name:
+                    p.grad = None
         optimizer.step()
     # scheduler.step()
     logging.info(f"Epoch {epoch + 1} - SwAV Loss: {np.mean(epoch_swav_losses):.4f}, Contrastive Loss: {np.mean(epoch_contrast_losses):.4f}")
@@ -138,10 +150,6 @@ def train(sample_list, model, optimizer, epoch, args, batch_size=512):
 if __name__ == "__main__":
     arg_parser = get_arg_parser()
     arg_parser.add_argument("--do_train", action="store_true", help="Enable training; if not set, use pretrained model.")
-    arg_parser.add_argument("--nmb_views", type=int, default=[2, 6], nargs="+",
-                    help="list of number of views (example: [2, 6])")
-    arg_parser.add_argument("--views_for_assign", type=int, nargs="+", default=[0, 1],
-                    help="list of global view indices used for computing assignments")
     args = arg_parser.parse_args()
     init_log()
 
@@ -182,6 +190,19 @@ if __name__ == "__main__":
     optimizer = torch.optim.AdamW([{
                 "params": p
             } for p in model.parameters()], config.swav.learning_rate)
+    
+    # Using LARS optimizer as per the SwAV paper
+    optimizer = Lars(
+        model.parameters(),
+        lr=config.swav.base_lr,
+        momentum=0.9,
+        weight_decay=config.swav.wd
+    )
+    warmup_lr_schedule = np.linspace(config.swav.start_warmup, config.swav.base_lr, len(sample_list) * config.swav.warmup_epochs)
+    iters = np.arange(len(sample_list) * (config.swav.n_epochs - config.swav.warmup_epochs))
+    cosine_lr_schedule = np.array([config.swav.final_lr + 0.5 * (config.swav.base_lr - config.swav.final_lr) * (1 + \
+                         math.cos(math.pi * t / (len(sample_list) * (config.swav.n_epochs - config.swav.warmup_epochs)))) for t in iters])
+    lr_schedule = np.concatenate((warmup_lr_schedule, cosine_lr_schedule))
     # scheduler = torch.optim.lr_scheduler.LambdaLR(
     #             optimizer,
     #             lr_lambda=lambda epoch: config.hyper_parameters.decay_gamma
@@ -194,7 +215,7 @@ if __name__ == "__main__":
 
     if args.do_train:
         for epoch in range(config.swav.n_epochs):
-            train(sample_list, model, optimizer, epoch, args, batch_size=config.swav.batch_size)
+            train(sample_list, model, optimizer, epoch, lr_schedule, config, batch_size=config.swav.batch_size)
         
         plt.plot(swav_losses, label='SwAV Loss')
         plt.plot(contrast_losses, label='Contrastive Loss')
