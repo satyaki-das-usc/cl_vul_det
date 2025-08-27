@@ -12,6 +12,7 @@ transformers
 tensorboard
 torchinfo
 pot
+timm
 
 # Utilities
 omegaconf
