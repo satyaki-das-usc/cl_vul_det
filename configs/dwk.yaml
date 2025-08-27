@@ -55,6 +55,10 @@ min_nonvul_per_batch: 1
 swav:
   learning_rate: 0.001
   num_prototypes: 128
+  hidden_mlp: 2048
+  projection_dim: 128
+  nmb_prototypes: 3000
+  l2norm: true
   temperature: 0.1
   sinkhorn:
     n_iters: 10
@@ -81,7 +85,6 @@ gnn:
   name: gine
   edge_dim: 2
   w2v_path: ${data_folder}/${dataset.name}/w2v.wv
-  projection_dim: 128
   embed_size: 256
   hidden_size: 256
   pooling_ratio: 0.8
