@@ -133,11 +133,6 @@ if __name__ == "__main__":
     #                                 ** epoch)
 
     K = max(1024, ceil(len(train_slices) / config.hyper_parameters.batch_size))
-    D = config.gnn.projection_dim
-    prototypes = torch.nn.Parameter(torch.randn(D, K, device=device))
-    logging.info(f"Initialized prototypes with shape {prototypes.shape}.")
-    with torch.no_grad():
-        prototypes.data = F.normalize(prototypes.data, dim=0)
 
     BATCH_SIZE = 256
     
@@ -149,15 +144,9 @@ if __name__ == "__main__":
     if args.do_train:
         for epoch in range(config.swav.n_epochs):
             logging.info(f"Epoch {epoch + 1}")
-            freeze_proto = (epoch == 0)
-            if freeze_proto:
-                optimizer = torch.optim.AdamW([{
-                    "params": p
-                } for p in model.parameters()], config.hyper_parameters.learning_rate)
-            else:
-                optimizer = torch.optim.AdamW([{
-                    "params": p
-                } for p in list(model.parameters()) + [prototypes]], config.hyper_parameters.learning_rate)
+            optimizer = torch.optim.AdamW([{
+                "params": p
+            } for p in model.parameters()], config.hyper_parameters.learning_rate)
             model.train()
             random.shuffle(sample_list)
             progress_bar = tqdm(range(0, len(sample_list), BATCH_SIZE))
@@ -167,13 +156,14 @@ if __name__ == "__main__":
 
             for i in progress_bar:
                 with torch.no_grad():
-                    prototypes.data = F.normalize(prototypes.data, dim=0)
+                    w = model.prototypes.weight.data.clone()
+                    w = F.normalize(w, dim=1, p=2)
+                    model.prototypes.weight.copy_(w)
                 
                 batched_graph = SliceGraphBatch(sample_list[i:i + BATCH_SIZE])
                 batched_graph = batched_graph.graphs.to(device)
                 inputs = augment_multicrop(batched_graph, mask_id=vocab.get_unk_id(), nmb_views=args.nmb_views)
-                logits, graph_activations = zip(*(model(inp) for inp in inputs))
-                output = [lg @ prototypes for lg in logits]
+                graph_activations, embeddings, output = zip(*(model(inp) for inp in inputs))
 
                 swav_loss = 0
                 for view_id in args.views_for_assign:
@@ -225,12 +215,6 @@ if __name__ == "__main__":
         model.load_state_dict(torch.load(model_save_path, map_location=device))
         logging.info(f"Model loaded from {model_save_path}")
 
-        prototypes_save_path = join(dataset_root, config.swav.prototypes_save_path)
-        if not exists(prototypes_save_path):
-            raise FileNotFoundError(f"Prototypes save path {prototypes_save_path} does not exist.")
-        prototypes.data = torch.load(prototypes_save_path, map_location=device)
-        logging.info(f"Prototypes loaded from {prototypes_save_path}")
-
     logging.info("Generating cluster IDs...")
     progress_bar = tqdm(range(0, len(sample_list), BATCH_SIZE))
     model.eval()
@@ -240,13 +224,12 @@ if __name__ == "__main__":
         batched_graph = batched_graph.graphs.to(device)
         global_view = augment(batched_graph, mask_id=vocab.get_unk_id())
         with torch.no_grad():
-            logits, _ = model(global_view)
-            output = logits @ prototypes
+            _, _, output = model(global_view)
             q = assignment_functions[config.swav.assignment_protocol](out)
             cluster_ids = q.argmax(dim=1)
             all_cluster_ids.extend(cluster_ids.cpu().numpy().tolist())
     logging.info("Obtained cluster IDs. Merging small clusters...")
-    all_cluster_ids = get_merged_clusters(all_cluster_ids, prototypes, min_size=config.hyper_parameters.batch_size)
+    all_cluster_ids = get_merged_clusters(all_cluster_ids, model.prototypes.weight.data.clone(), min_size=config.hyper_parameters.batch_size)
     
     logging.info("Finalized cluster IDs. Generating groups...")
     cluster_id_maps = defaultdict(list)
@@ -263,10 +246,6 @@ if __name__ == "__main__":
     model_save_path = join(dataset_root, config.swav.model_save_path)
     torch.save(model.state_dict(), model_save_path)
     logging.info(f"Model saved to {model_save_path}")
-    logging.info(f"Saving prototypes...")
-    prototypes_save_path = join(dataset_root, config.swav.prototypes_save_path)
-    torch.save(prototypes.data, prototypes_save_path)
-    logging.info(f"Prototypes saved to {prototypes_save_path}")
 
     logging.info(f"Completed.")
     logging.info("=========End session=========")

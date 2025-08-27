@@ -177,17 +177,20 @@ class GraphSwAVModel(torch.nn.Module):
     def __init__(self, config: DictConfig, vocab: Vocabulary, vocabulary_size: int,
                  pad_idx: int):
         super().__init__()
-        hidden_dim = config.gnn.hidden_size
+        self.l2norm = config.swav.l2norm
         self.__graph_encoder = self._encoders[config.gnn.name](config.gnn, vocab, vocabulary_size,
                                                                pad_idx)
         self.projection_head = torch.nn.Sequential(
-            torch.nn.Linear(hidden_dim, config.gnn.projection_dim),
-            torch.nn.ReLU(),
-            torch.nn.Linear(config.gnn.projection_dim, config.gnn.projection_dim)
+            torch.nn.Linear(config.gnn.hidden_size, config.swav.hidden_mlp),
+            torch.nn.BatchNorm1d(config.swav.hidden_mlp),
+            torch.nn.ReLU(inplace=True),
+            torch.nn.Linear(config.swav.hidden_mlp, config.swav.projection_dim)
         )
+        self.prototypes = torch.nn.Linear(config.swav.projection_dim, config.swav.nmb_prototypes, bias=False)
 
     def forward(self, batch: Batch):
         graph_activations = self.__graph_encoder(batch)
-        logits = self.projection_head(graph_activations)
-        logits = F.normalize(logits, dim=-1)
-        return logits, graph_activations
+        embeddings = self.projection_head(graph_activations)
+        if self.l2norm:
+            embeddings = F.normalize(embeddings, dim=-1, p=2)
+        return graph_activations, embeddings, self.prototypes(embeddings)
