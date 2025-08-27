@@ -11,7 +11,6 @@ from multiprocessing import cpu_count
 from omegaconf import DictConfig, OmegaConf
 from typing import List, cast
 from tqdm import tqdm
-from math import ceil
 from os.path import join, isdir, exists
 from collections import defaultdict
 
@@ -29,6 +28,9 @@ from src.models.modules.losses import InfoNCEContrastiveLoss
 
 from src.swav.assignment_protocols import sinkhorn, uot_sinkhorn_gpu
 from src.swav.graph_augmentations import augment, augment_multicrop
+
+swav_losses = []
+contrast_losses = []
 
 def init_log():
     LOG_DIR = "logs"
@@ -79,6 +81,59 @@ assignment_functions = {
     "sinkhorn": sinkhorn,
     "uot_sinkhorn": uot_sinkhorn_gpu
 }
+
+def train(sample_list, model, optimizer, epoch, batch_size=512):
+    logging.info(f"Epoch {epoch + 1}")
+    model.train()
+    random.shuffle(sample_list)
+    progress_bar = tqdm(range(0, len(sample_list), batch_size))
+
+    epoch_swav_losses = []
+    epoch_contrast_losses = []
+
+    for i in progress_bar:
+        with torch.no_grad():
+            w = model.prototypes.weight.data.clone()
+            w = F.normalize(w, dim=1, p=2)
+            model.prototypes.weight.copy_(w)
+        
+        batched_graph = SliceGraphBatch(sample_list[i:i + batch_size])
+        batched_graph = batched_graph.graphs.to(device)
+        inputs = augment_multicrop(batched_graph, mask_id=vocab.get_unk_id(), nmb_views=args.nmb_views)
+        graph_activations, embeddings, output = zip(*(model(inp) for inp in inputs))
+
+        swav_loss = 0
+        for view_id in args.views_for_assign:
+            with torch.no_grad():
+                out = output[view_id].detach()
+                q = assignment_functions[config.swav.assignment_protocol](out)
+            subloss = 0
+            for v in np.delete(np.arange(np.sum(args.nmb_views)), view_id):
+                x = output[v] / config.swav.temperature
+                subloss -= torch.mean(torch.sum(q * F.log_softmax(x, dim=-1), dim=-1))
+            swav_loss += subloss / (np.sum(args.nmb_views) - 1)
+        swav_loss /= len(args.views_for_assign)
+
+        h1, h2 = F.normalize(graph_activations[0], dim=-1), F.normalize(graph_activations[1], dim=-1)
+        contrastive_loss = contrastive_criterion(h1, h2)
+        
+        loss = swav_loss + config.swav.contrastive.lambda_h * contrastive_loss
+
+        epoch_swav_losses.append(swav_loss.item())
+        epoch_contrast_losses.append(contrastive_loss.item())
+
+        swav_losses.append(swav_loss.item())
+        contrast_losses.append(contrastive_loss.item())
+        progress_bar.set_postfix({
+            'swav': swav_loss.item(),
+            'contrast': contrastive_loss.item()
+        })
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+    # scheduler.step()
+    logging.info(f"Epoch {epoch + 1} - SwAV Loss: {np.mean(epoch_swav_losses):.4f}, Contrastive Loss: {np.mean(epoch_contrast_losses):.4f}")
 
 if __name__ == "__main__":
     arg_parser = get_arg_parser()
@@ -131,8 +186,6 @@ if __name__ == "__main__":
     #             optimizer,
     #             lr_lambda=lambda epoch: config.hyper_parameters.decay_gamma
     #                                 ** epoch)
-
-    BATCH_SIZE = 256
     
     contrastive_criterion = InfoNCEContrastiveLoss(temperature=config.swav.contrastive.temperature)
 
@@ -141,61 +194,8 @@ if __name__ == "__main__":
 
     if args.do_train:
         for epoch in range(config.swav.n_epochs):
-            logging.info(f"Epoch {epoch + 1}")
-            optimizer = torch.optim.AdamW([{
-                "params": p
-            } for p in model.parameters()], config.hyper_parameters.learning_rate)
-            model.train()
-            random.shuffle(sample_list)
-            progress_bar = tqdm(range(0, len(sample_list), BATCH_SIZE))
-
-            epoch_swav_losses = []
-            epoch_contrast_losses = []
-
-            for i in progress_bar:
-                with torch.no_grad():
-                    w = model.prototypes.weight.data.clone()
-                    w = F.normalize(w, dim=1, p=2)
-                    model.prototypes.weight.copy_(w)
-                
-                batched_graph = SliceGraphBatch(sample_list[i:i + BATCH_SIZE])
-                batched_graph = batched_graph.graphs.to(device)
-                inputs = augment_multicrop(batched_graph, mask_id=vocab.get_unk_id(), nmb_views=args.nmb_views)
-                graph_activations, embeddings, output = zip(*(model(inp) for inp in inputs))
-
-                swav_loss = 0
-                for view_id in args.views_for_assign:
-                    with torch.no_grad():
-                        out = output[view_id].detach()
-                        q = assignment_functions[config.swav.assignment_protocol](out)
-                    subloss = 0
-                    for v in np.delete(np.arange(np.sum(args.nmb_views)), view_id):
-                        x = output[v] / config.swav.temperature
-                        subloss -= torch.mean(torch.sum(q * F.log_softmax(x, dim=-1), dim=-1))
-                    swav_loss += subloss / (np.sum(args.nmb_views) - 1)
-                swav_loss /= len(args.views_for_assign)
-
-                h1, h2 = F.normalize(graph_activations[0], dim=-1), F.normalize(graph_activations[1], dim=-1)
-                contrastive_loss = contrastive_criterion(h1, h2)
-                
-                loss = swav_loss + config.swav.contrastive.lambda_h * contrastive_loss
-
-                epoch_swav_losses.append(swav_loss.item())
-                epoch_contrast_losses.append(contrastive_loss.item())
-
-                swav_losses.append(swav_loss.item())
-                contrast_losses.append(contrastive_loss.item())
-                progress_bar.set_postfix({
-                    'swav': swav_loss.item(),
-                    'contrast': contrastive_loss.item()
-                })
-
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-            # scheduler.step()
-            logging.info(f"Epoch {epoch + 1} - SwAV Loss: {np.mean(epoch_swav_losses):.4f}, Contrastive Loss: {np.mean(epoch_contrast_losses):.4f}")
-
+            train(sample_list, model, optimizer, epoch, batch_size=config.swav.batch_size)
+        
         plt.plot(swav_losses, label='SwAV Loss')
         plt.plot(contrast_losses, label='Contrastive Loss')
         plt.xlabel('Iteration')
@@ -214,11 +214,11 @@ if __name__ == "__main__":
         logging.info(f"Model loaded from {model_save_path}")
 
     logging.info("Generating cluster IDs...")
-    progress_bar = tqdm(range(0, len(sample_list), BATCH_SIZE))
+    progress_bar = tqdm(range(0, len(sample_list), config.swav.batch_size))
     model.eval()
     all_cluster_ids = []
     for i in progress_bar:
-        batched_graph = SliceGraphBatch(sample_list[i:i + BATCH_SIZE])
+        batched_graph = SliceGraphBatch(sample_list[i:i + config.swav.batch_size])
         batched_graph = batched_graph.graphs.to(device)
         global_view = augment(batched_graph, mask_id=vocab.get_unk_id())
         with torch.no_grad():
