@@ -82,6 +82,12 @@ swav:
   model_save_path: GraphSwAV.ckpt
   prototypes_save_path: GraphSwAV_prototypes.ckpt
   assignment_protocol: uot_sinkhorn
+  nmb_views:
+  - 2
+  - 6
+  views_for_assign:
+  - 0
+  - 1
 gnn:
   name: gine
   edge_dim: 2
