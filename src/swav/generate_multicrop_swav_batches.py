@@ -132,8 +132,6 @@ if __name__ == "__main__":
     #             lr_lambda=lambda epoch: config.hyper_parameters.decay_gamma
     #                                 ** epoch)
 
-    K = max(1024, ceil(len(train_slices) / config.hyper_parameters.batch_size))
-
     BATCH_SIZE = 256
     
     contrastive_criterion = InfoNCEContrastiveLoss(temperature=config.swav.contrastive.temperature)
@@ -224,7 +222,7 @@ if __name__ == "__main__":
         batched_graph = batched_graph.graphs.to(device)
         global_view = augment(batched_graph, mask_id=vocab.get_unk_id())
         with torch.no_grad():
-            _, _, output = model(global_view)
+            _, _, out = model(global_view)
             q = assignment_functions[config.swav.assignment_protocol](out)
             cluster_ids = q.argmax(dim=1)
             all_cluster_ids.extend(cluster_ids.cpu().numpy().tolist())
