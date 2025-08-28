@@ -69,7 +69,7 @@ swav:
   temperature: 0.1
   sinkhorn:
     n_iters: 10
-    epsilon: 0.5
+    epsilon: 0.03
     temperature: 10.0
   contrastive:
     temperature: 0.1
@@ -87,7 +87,7 @@ swav:
   use_prototype_loss: true
   model_save_path: GraphSwAV.ckpt
   prototypes_save_path: GraphSwAV_prototypes.ckpt
-  assignment_protocol: uot_sinkhorn
+  assignment_protocol: sinkhorn
   nmb_views:
   - 2
   - 6
