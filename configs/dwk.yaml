@@ -67,6 +67,7 @@ swav:
   nmb_prototypes: 3000
   l2norm: true
   temperature: 0.1
+  weight_factor: 0.7
   sinkhorn:
     n_iters: 10
     epsilon: 0.03
@@ -135,7 +136,7 @@ hyper_parameters:
   nesterov: true
   use_warmup_lr: false
   contrastive_warmup_epochs: 0
-  contrastive_learning_weight_factor: 1.0
+  projection_weight_factor: 1.0
   learning_rate: 0.002
   weight_decay: 0
   decay_gamma: 0.95
