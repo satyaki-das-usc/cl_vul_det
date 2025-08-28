@@ -1,12 +1,28 @@
 import torch
 
-def sinkhorn(out, n_iters=3, epsilon=0.05):
-    Q = torch.exp(out / epsilon).t()
-    Q /= Q.sum()
+@torch.no_grad()
+def sinkhorn(out, n_iters=3, epsilon=0.03):
+    Q = torch.exp(out / epsilon).t() # Q is K-by-B for consistency with notations from our paper
+    B = Q.shape[1] # number of samples to assign
+    K = Q.shape[0] # how many prototypes
+
+    # make the matrix sums to 1
+    sum_Q = torch.sum(Q)
+    Q /= sum_Q
+
     for _ in range(n_iters):
-        Q /= Q.sum(dim=1, keepdim=True)
-        Q /= Q.sum(dim=0, keepdim=True)
-    return (Q / Q.sum(dim=0, keepdim=True)).t()
+        # normalize each row: total weight per prototype must be 1/K
+        sum_of_rows = torch.sum(Q, dim=1, keepdim=True)
+        Q /= sum_of_rows
+        Q /= K
+
+        # normalize each column: total weight per sample must be 1/B
+        sum_of_cols = torch.sum(Q, dim=0, keepdim=True)
+        Q /= sum_of_cols
+        Q /= B
+
+    Q *= B # the colomns must sum to 1 so that Q is an assignment
+    return Q.t()
 
 def uot_sinkhorn_gpu(scores: torch.Tensor,
                      epsilon=0.05,
