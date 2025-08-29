@@ -238,7 +238,7 @@ if __name__ == "__main__":
     logging.info("Data module loading completed.")
 
     logging.info("Building model...")
-    model = GraphSwAVVD(config, vocab, vocab_size, pad_idx)
+    model = GraphSwAVVD(config, vocab, vocab_size, pad_idx).to(device)
     logging.info("Model building completed.")
 
     train_loader = data_module.train_dataloader()
