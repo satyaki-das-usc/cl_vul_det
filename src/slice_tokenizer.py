@@ -91,11 +91,11 @@ class SliceTokenizer:
             
             new_node = f"{start}_step"
             self.slice_graph.nodes[start]["sym_code"] = condition
-            self.slice_graph.nodes[start]["code_sym_token"] = self.custome_tokenize_code_line(condition, False)
+            self.slice_graph.nodes[start]["code_sym_token"] = self.custom_tokenize_code_line(condition, False)
 
             self.slice_graph.add_node(new_node)
             self.slice_graph.nodes[new_node]["sym_code"] = step
-            self.slice_graph.nodes[new_node]["code_sym_token"] = self.custome_tokenize_code_line(step, False)
+            self.slice_graph.nodes[new_node]["code_sym_token"] = self.custom_tokenize_code_line(step, False)
             edges_to_remove.append((start, end))
             new_edges.append((start, new_node, {"label": "CONTROLS", "direction": "forward"}))
             
@@ -134,11 +134,11 @@ class SliceTokenizer:
 
             new_node = f"{start}_statement"
             self.slice_graph.nodes[start]["sym_code"] = condition
-            self.slice_graph.nodes[start]["code_sym_token"] = self.custome_tokenize_code_line(condition, False)
+            self.slice_graph.nodes[start]["code_sym_token"] = self.custom_tokenize_code_line(condition, False)
 
             self.slice_graph.add_node(new_node)
             self.slice_graph.nodes[new_node]["sym_code"] = statement
-            self.slice_graph.nodes[new_node]["code_sym_token"] = self.custome_tokenize_code_line(statement, False)
+            self.slice_graph.nodes[new_node]["code_sym_token"] = self.custom_tokenize_code_line(statement, False)
             edges_to_remove.append((start, end))
             new_edges.append((start, new_node, {"label": "CONTROLS", "direction": "forward"}))
 
@@ -156,11 +156,11 @@ class SliceTokenizer:
             condition, step = node_sym_code.strip("(").rpartition(")")[0].split(";")
             new_node = f"{start}_step"
             self.slice_graph.nodes[start]["sym_code"] = condition
-            self.slice_graph.nodes[start]["code_sym_token"] = self.custome_tokenize_code_line(condition, False)
+            self.slice_graph.nodes[start]["code_sym_token"] = self.custom_tokenize_code_line(condition, False)
 
             self.slice_graph.add_node(new_node)
             self.slice_graph.nodes[new_node]["sym_code"] = step
-            self.slice_graph.nodes[new_node]["code_sym_token"] = self.custome_tokenize_code_line(step, False)
+            self.slice_graph.nodes[new_node]["code_sym_token"] = self.custom_tokenize_code_line(step, False)
             edges_to_remove.append((start, end))
             new_edges.append((start, new_node, {"label": "CONTROLS", "direction": "forward"}))
             
@@ -181,9 +181,9 @@ class SliceTokenizer:
 
         nodes_to_remove = []
         for idx, line in enumerate(self.slice_graph.nodes):
-            self.slice_graph.nodes[line]['sym_code'] = sym_code_lines[idx]
+            self.slice_graph.nodes[line]["sym_code"] = sym_code_lines[idx]
             if self.tokenizer is None:
-                self.slice_graph.nodes[line]["code_sym_token"] = self.custome_tokenize_code_line(sym_code_lines[idx], False)
+                self.slice_graph.nodes[line]["code_sym_token"] = self.custom_tokenize_code_line(sym_code_lines[idx], False)
             else:
                 self.slice_graph.nodes[line]["code_sym_token"] = self.tokenizer.tokenize(sym_code_lines[idx].strip())
             if len(self.slice_graph.nodes[line]["code_sym_token"]) > 0:
@@ -225,8 +225,8 @@ class SliceTokenizer:
             edge_sym_token = []
             edge_rev_sym_token = []
             if self.tokenizer is None:
-                edge_sym_token = self.custome_tokenize_code_line(edge_string, False)
-                edge_rev_sym_token = self.custome_tokenize_code_line(edge_string_rev, False)
+                edge_sym_token = self.custom_tokenize_code_line(edge_string, False)
+                edge_rev_sym_token = self.custom_tokenize_code_line(edge_string_rev, False)
             else:
                 edge_sym_token = self.tokenizer.tokenize(edge_string)
                 edge_rev_sym_token = self.tokenizer.tokenize(edge_string_rev)
@@ -328,7 +328,7 @@ class SliceTokenizer:
         # return the list of cleaned lines
         return cleaned_gadget, var_symbols
     
-    def custome_tokenize_code_line(self, line: str, subtoken: bool):
+    def custom_tokenize_code_line(self, line: str, subtoken: bool):
         """
         transform a string of code line into list of tokens
 
