@@ -16,9 +16,9 @@ class SliceDataset(Dataset):
         self.__config = config
         assert exists(slices_paths), f"{slices_paths} not exists!"
         with open(slices_paths, "r") as rfi:
-            slice_path_list = list(json.load(rfi))
+            self.__slice_path_list = list(json.load(rfi))
         self.__vocab = vocab
-        self.__slices = [SliceGraph(slice_path) for slice_path in slice_path_list]
+        self.__slices = [SliceGraph(slice_path) for slice_path in self.__slice_path_list]
         self.__n_samples = len(self.__slices)
     
     def __len__(self) -> int:
@@ -27,7 +27,8 @@ class SliceDataset(Dataset):
     def __getitem__(self, index) -> SliceGraphSample:
         slice_graph: SliceGraph = self.__slices[index]
         return SliceGraphSample(graph=slice_graph.to_torch_graph(self.__vocab, self.__config.dataset.token.max_parts),
-                         label=slice_graph.label)
+                         label=slice_graph.label,
+                         slice_path=self.__slice_path_list[index])
 
     def get_n_samples(self):
         return self.__n_samples

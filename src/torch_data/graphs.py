@@ -13,9 +13,15 @@ edge_type_map = {
 
 @dataclass
 class SliceGraph:
-    def __init__(self, slice_path: str = None):
-        with open(slice_path, "rb") as rbfi:
-            self.__slice_graph: nx.DiGraph = pickle.load(rbfi)
+    def __init__(self, slice_path: str = None, slice_graph: nx.DiGraph = None):
+        if slice_graph is not None:
+            self.__slice_graph = slice_graph
+        elif slice_path is not None:
+            with open(slice_path, "rb") as rbfi:
+                self.__slice_graph: nx.DiGraph = pickle.load(rbfi)
+        else:
+            print(f"Neither slice graph path nor the slice graph object was provided. Terminating...")
+            exit(-1)
         
         self.__init_graph()
     

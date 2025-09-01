@@ -7,10 +7,11 @@ import torch
 class SliceGraphSample:
     graph: Data
     label: int
+    slice_path: str
 
 class SliceGraphBatch:
     def __init__(self, slice_graphs: List[SliceGraphSample]):
-
+        self.slice_paths = [slice_graph.slice_path for slice_graph in slice_graphs]
         self.labels = torch.tensor([slice_graph.label for slice_graph in slice_graphs],
                                    dtype=torch.long)
         self.graphs = Batch.from_data_list([slice_graph.graph for slice_graph in slice_graphs])
