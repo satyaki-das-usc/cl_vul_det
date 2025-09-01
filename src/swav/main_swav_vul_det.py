@@ -24,10 +24,12 @@ from src.torch_data.datamodules import SliceDataModule
 from src.models.swav_vd import GraphSwAVVD
 from src.models.modules.losses import InfoNCEContrastiveLoss, OrthogonalProjectionLoss
 from src.swav.assignment_protocols import sinkhorn, uot_sinkhorn_gpu
-from src.swav.graph_augmentations import augment_multicrop
+from src.swav.graph_augmentations import generate_SF_augmentations
 
 contrastive_criterion = None
 projection_criterion = None
+vocab = None
+config = None
 
 proj_losses = []
 ce_losses = []
@@ -65,7 +67,7 @@ def init_log():
     logging.info("=========New session=========")
     logging.info(f"Logging dir: {LOG_DIR}")
 
-def train(train_loader, model, optimizer, epoch, lr_schedule, config, batch_size=512):
+def train(train_loader, model, optimizer, epoch, lr_schedule):
     logging.info(f"Epoch {epoch + 1}")
     model.train()
     progress_bar = tqdm(train_loader, desc="Training")
@@ -97,8 +99,8 @@ def train(train_loader, model, optimizer, epoch, lr_schedule, config, batch_size
         epoch_ce_losses.append(ce_loss.item())
         ce_losses.append(ce_loss.item())
         
-        inputs = augment_multicrop(batched_graph, mask_id=vocab.get_unk_id(), nmb_views=config.swav.nmb_views)
-        _, _, graph_encodings, swav_embeddings, output = zip(*(model(inp) for inp in inputs))
+        inputs = generate_SF_augmentations(batched_graph, vocab, config.dataset.token.max_parts)
+        _, _, graph_encodings, _, output = zip(*(model(inp) for inp in inputs))
 
         swav_loss = 0
         for view_id in config.swav.views_for_assign:
@@ -154,7 +156,7 @@ def eval(model, val_loader):
     all_labels = []
     with torch.no_grad():
         for batch in progress_bar:
-            logits, activations, _, _, _ = model(batch.graphs)
+            logits, _, _, _, _ = model(batch.graphs)
             loss = F.cross_entropy(logits, batch.labels)
             total_loss += loss.item()
             _, preds = logits.max(dim=1)
@@ -178,7 +180,7 @@ def test(model, test_loader):
     all_labels = []
     with torch.no_grad():
         for batch in progress_bar:
-            logits, activations, _, _, _ = model(batch.graphs)
+            logits, _, _, _, _ = model(batch.graphs)
             loss = F.cross_entropy(logits, batch.labels)
             total_loss += loss.item()
             _, preds = logits.max(dim=1)
@@ -280,7 +282,7 @@ if __name__ == "__main__":
     
     best_val_f1 = 0.0
     for epoch in range(config.hyper_parameters.n_epochs):
-        train(train_loader, model, optimizer, epoch, lr_schedule, config, batch_size=config.swav.batch_size)
+        train(train_loader, model, optimizer, epoch, lr_schedule)
         eval_stats = eval(model, data_module.val_dataloader())
         if eval_stats["f1"] <= best_val_f1:
             continue
