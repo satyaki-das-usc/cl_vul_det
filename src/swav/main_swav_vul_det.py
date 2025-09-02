@@ -30,6 +30,7 @@ contrastive_criterion = None
 projection_criterion = None
 vocab = None
 config = None
+device = None
 
 proj_losses = []
 ce_losses = []
@@ -140,12 +141,14 @@ def eval(model, val_loader):
     all_labels = []
     with torch.no_grad():
         for batch in progress_bar:
-            logits, _, _, _, _ = model(batch.graphs)
-            loss = F.cross_entropy(logits, batch.labels)
+            labels = batch.labels.to(device)
+            graphs = batch.graphs.to(device)
+            logits, _, _, _, _ = model(graphs)
+            loss = F.cross_entropy(logits, labels)
             total_loss += loss.item()
             _, preds = logits.max(dim=1)
             all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(batch.labels.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
     stats = {
         "eval_loss": total_loss / len(val_loader),
         "accuracy": accuracy_score(all_labels, all_preds),
@@ -164,12 +167,14 @@ def test(model, test_loader):
     all_labels = []
     with torch.no_grad():
         for batch in progress_bar:
-            logits, _, _, _, _ = model(batch.graphs)
-            loss = F.cross_entropy(logits, batch.labels)
+            labels = batch.labels.to(device)
+            graphs = batch.graphs.to(device)
+            logits, _, _, _, _ = model(graphs)
+            loss = F.cross_entropy(logits, labels)
             total_loss += loss.item()
             _, preds = logits.max(dim=1)
             all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(batch.labels.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
     stats = {
         "test_loss": total_loss / len(test_loader),
         "accuracy": accuracy_score(all_labels, all_preds),
