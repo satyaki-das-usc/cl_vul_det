@@ -1,11 +1,13 @@
 import re
+import os
+import logging
 
 from shutil import copytree, rmtree
 import networkx as nx
 from warnings import filterwarnings
 
 from argparse import ArgumentParser
-from os.path import exists, join
+from os.path import exists, join, isdir
 from typing import List, Set, Tuple, Dict
 
 def filter_warnings():
@@ -105,6 +107,23 @@ def get_arg_parser():
                             help="Whether to use NVD data")
 
     return arg_parser
+
+def init_log(module_name: str):
+    LOG_DIR = "logs"
+    if not isdir(LOG_DIR):
+        os.makedirs(LOG_DIR)
+
+    log_file = join(LOG_DIR, f"{module_name}.log")
+    logging.basicConfig(
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()
+        ],
+        format='%(asctime)s %(levelname)-8s %(message)s',
+        level=logging.INFO,
+        datefmt='%Y-%m-%d %H:%M:%S')
+    logging.info("=========New session=========")
+    logging.info(f"Logging file: {log_file}")
 
 def copy_directory(source_dir, destination_dir):
     try:

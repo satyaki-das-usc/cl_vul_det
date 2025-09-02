@@ -14,7 +14,7 @@ from typing import List, Set, Tuple, Dict, cast
 
 from tqdm import tqdm
 
-from src.common_utils import read_csv, extract_nodes_with_location_info, extract_line_number, get_arg_parser
+from src.common_utils import read_csv, extract_nodes_with_location_info, extract_line_number, get_arg_parser, init_log
 from src.cpg_query import get_line_nodes
 
 csv_path = ""
@@ -25,22 +25,6 @@ sensi_api_path = ""
 USE_CPU = cpu_count()
 
 feat_name_code_map = dict()
-
-def init_log():
-    LOG_DIR = "logs"
-    if not isdir(LOG_DIR):
-        os.makedirs(LOG_DIR)
-    
-    logging.basicConfig(
-        handlers=[
-            logging.FileHandler(join(LOG_DIR, "generate_vf_slices.log")),
-            logging.StreamHandler()
-        ],
-        format='%(asctime)s %(levelname)-8s %(message)s',
-        level=logging.INFO,
-        datefmt='%Y-%m-%d %H:%M:%S')
-    logging.info("=========New session=========")
-    logging.info(f"Logging dir: {LOG_DIR}")
 
 def get_forward_slice_graph(CPG: nx.DiGraph, line_no: int):
     slice_lines = set()
@@ -487,5 +471,5 @@ if __name__ == "__main__":
     arg_parser.add_argument("--only_clear_slices", action='store_true', 
                             help="Whether to only clear existing slices")
     args = arg_parser.parse_args()
-    init_log()
+    init_log(splitext(basename(__file__))[0])
     main(args)

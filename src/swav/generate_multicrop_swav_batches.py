@@ -1,5 +1,4 @@
 import random
-import os
 import json
 import torch
 import numpy as np
@@ -12,7 +11,7 @@ from multiprocessing import cpu_count
 from omegaconf import DictConfig, OmegaConf
 from typing import List, cast
 from tqdm import tqdm
-from os.path import join, isdir, exists
+from os.path import join, splitext, basename, exists
 from collections import defaultdict
 
 from pytorch_lightning import seed_everything
@@ -20,7 +19,7 @@ from pytorch_lightning import seed_everything
 import torch.nn.functional as F
 from timm.optim.lars import Lars
 
-from src.common_utils import get_arg_parser
+from src.common_utils import get_arg_parser, init_log
 from src.vocabulary import Vocabulary
 from src.torch_data.graphs import SliceGraph
 from src.torch_data.samples import SliceGraphSample, SliceGraphBatch
@@ -33,22 +32,6 @@ from src.swav.graph_augmentations import augment, augment_multicrop
 
 swav_losses = []
 contrast_losses = []
-
-def init_log():
-    LOG_DIR = "logs"
-    if not isdir(LOG_DIR):
-        os.makedirs(LOG_DIR)
-    
-    logging.basicConfig(
-        handlers=[
-            logging.FileHandler(join(LOG_DIR, "generate_multicrop_swav_batches.log")),
-            logging.StreamHandler()
-        ],
-        format='%(asctime)s %(levelname)-8s %(message)s',
-        level=logging.INFO,
-        datefmt='%Y-%m-%d %H:%M:%S')
-    logging.info("=========New session=========")
-    logging.info(f"Logging dir: {LOG_DIR}")
 
 def get_merged_clusters(cluster_ids: List[int], prototypes, min_size: int = 2) -> List[int]:
     """
@@ -151,7 +134,7 @@ if __name__ == "__main__":
     arg_parser = get_arg_parser()
     arg_parser.add_argument("--do_train", action="store_true", help="Enable training; if not set, use pretrained model.")
     args = arg_parser.parse_args()
-    init_log()
+    init_log(splitext(basename(__file__))[0])
 
     config = cast(DictConfig, OmegaConf.load(args.config))
     if config.num_workers != -1:

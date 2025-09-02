@@ -1,11 +1,10 @@
 import functools
-import os
 import json
 import pickle
 import logging
 import networkx as nx
 
-from os.path import isdir, exists, dirname, splitext, join
+from os.path import basename, exists, dirname, splitext, join
 from collections import defaultdict
 
 from tqdm import tqdm
@@ -13,7 +12,7 @@ from multiprocessing import Manager, Pool, cpu_count
 from omegaconf import DictConfig, OmegaConf
 from typing import cast
 
-from src.common_utils import get_arg_parser
+from src.common_utils import get_arg_parser, init_log
 
 all_feats_name = ["incorr_calc_buff_size", "buff_access_src_size", "off_by_one", "buff_overread", "double_free", "use_after_free", "buff_underwrite", "buff_underread", "sensi_read", "sensi_write"]
 spu_feats_name = ["edge_set", "node_set"]
@@ -23,22 +22,6 @@ dataset_root = ""
 filewise_xfg_path_map = dict()
 instance_perturbation_map = dict()
 unperturbed_file_list = set()
-
-def init_log():
-    LOG_DIR = "logs"
-    if not isdir(LOG_DIR):
-        os.makedirs(LOG_DIR)
-    
-    logging.basicConfig(
-        handlers=[
-            logging.FileHandler(join(LOG_DIR, "generate_instance_perturbation_mapping.log")),
-            logging.StreamHandler()
-        ],
-        format='%(asctime)s %(levelname)-8s %(message)s',
-        level=logging.INFO,
-        datefmt='%Y-%m-%d %H:%M:%S')
-    logging.info("=========New session=========")
-    logging.info(f"Logging dir: {LOG_DIR}")
 
 def process_slice_path_parallel(slice_path, queue):
     with open(slice_path, "rb") as rbfi:
@@ -57,7 +40,7 @@ def process_slice_path_parallel(slice_path, queue):
 if __name__ == "__main__":
     arg_parser = get_arg_parser()
     args = arg_parser.parse_args()
-    init_log()
+    init_log(splitext(basename(__file__))[0])
 
     config = cast(DictConfig, OmegaConf.load(args.config))
     if config.num_workers != -1:

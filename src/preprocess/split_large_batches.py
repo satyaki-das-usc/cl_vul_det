@@ -1,4 +1,3 @@
-import os
 import json
 import pickle
 
@@ -7,7 +6,7 @@ import logging
 import networkx as nx
 
 from multiprocessing import cpu_count
-from os.path import join, isdir
+from os.path import join, splitext, basename
 from math import floor
 from omegaconf import DictConfig, OmegaConf
 from typing import cast
@@ -15,23 +14,7 @@ from typing import cast
 from tqdm import tqdm
 from pytorch_lightning import seed_everything
 
-from src.common_utils import get_arg_parser, filter_warnings
-
-def init_log():
-    LOG_DIR = "logs"
-    if not isdir(LOG_DIR):
-        os.makedirs(LOG_DIR)
-    
-    logging.basicConfig(
-        handlers=[
-            logging.FileHandler(join(LOG_DIR, "split_large_batches.log")),
-            logging.StreamHandler()
-        ],
-        format='%(asctime)s %(levelname)-8s %(message)s',
-        level=logging.INFO,
-        datefmt='%Y-%m-%d %H:%M:%S')
-    logging.info("=========New session=========")
-    logging.info(f"Logging dir: {LOG_DIR}")
+from src.common_utils import get_arg_parser, filter_warnings, init_log
 
 def delete_indices(lst, indices):
     indices_set = set(indices)
@@ -62,7 +45,7 @@ if __name__ == "__main__":
     config = cast(DictConfig, OmegaConf.load(args.config))
     seed_everything(config.seed, workers=True)
 
-    init_log()
+    init_log(splitext(basename(__file__))[0])
 
     if config.num_workers != -1:
         USE_CPU = min(config.num_workers, cpu_count())

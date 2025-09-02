@@ -1,4 +1,3 @@
-import os
 import json
 import torch
 import random
@@ -9,7 +8,7 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
 from multiprocessing import cpu_count
-from os.path import join, isdir
+from os.path import join, splitext, basename
 from math import ceil
 from omegaconf import DictConfig, OmegaConf
 from typing import cast
@@ -19,7 +18,7 @@ from sklearn.manifold import TSNE
 from tqdm import tqdm
 from pytorch_lightning import seed_everything
 
-from src.common_utils import get_arg_parser, filter_warnings
+from src.common_utils import get_arg_parser, filter_warnings, init_log
 from src.vocabulary import Vocabulary
 
 from src.torch_data.graphs import SliceGraph
@@ -28,22 +27,6 @@ from src.torch_data.samples import SliceGraphSample, SliceGraphBatch
 from src.models.modules.gnns import GraphSwAVModel
 
 max_len = 16
-
-def init_log():
-    LOG_DIR = "logs"
-    if not isdir(LOG_DIR):
-        os.makedirs(LOG_DIR)
-    
-    logging.basicConfig(
-        handlers=[
-            logging.FileHandler(join(LOG_DIR, "generate_swav_batches.log")),
-            logging.StreamHandler()
-        ],
-        format='%(asctime)s %(levelname)-8s %(message)s',
-        level=logging.INFO,
-        datefmt='%Y-%m-%d %H:%M:%S')
-    logging.info("=========New session=========")
-    logging.info(f"Logging dir: {LOG_DIR}")
 
 def soft_cross_entropy(preds, targets):
     log_probs = F.log_softmax(preds, dim=1)
@@ -185,7 +168,7 @@ if __name__ == "__main__":
     config = cast(DictConfig, OmegaConf.load(args.config))
     seed_everything(config.seed, workers=True)
 
-    init_log()
+    init_log(splitext(basename(__file__))[0])
 
     if config.num_workers != -1:
         USE_CPU = min(config.num_workers, cpu_count())

@@ -1,37 +1,20 @@
-import os
 import json
 
 import logging
 
 from multiprocessing import cpu_count
-from os.path import join, isdir
+from os.path import join, splitext, basename
 from omegaconf import DictConfig, OmegaConf
 from typing import cast
 
 from sklearn.model_selection import train_test_split
 
-from src.common_utils import get_arg_parser
-
-def init_log():
-    LOG_DIR = "logs"
-    if not isdir(LOG_DIR):
-        os.makedirs(LOG_DIR)
-    
-    logging.basicConfig(
-        handlers=[
-            logging.FileHandler(join(LOG_DIR, "split_dataset.log")),
-            logging.StreamHandler()
-        ],
-        format='%(asctime)s %(levelname)-8s %(message)s',
-        level=logging.INFO,
-        datefmt='%Y-%m-%d %H:%M:%S')
-    logging.info("=========New session=========")
-    logging.info(f"Logging dir: {LOG_DIR}")
+from src.common_utils import get_arg_parser, init_log
 
 if __name__ == "__main__":
     arg_parser = get_arg_parser()
     args = arg_parser.parse_args()
-    init_log()
+    init_log(splitext(basename(__file__))[0])
 
     config = cast(DictConfig, OmegaConf.load(args.config))
     if config.num_workers != -1:

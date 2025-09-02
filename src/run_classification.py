@@ -5,7 +5,7 @@ import torch
 import logging
 
 from multiprocessing import cpu_count
-from os.path import join, isdir, basename, exists
+from os.path import join, splitext, basename, exists
 from omegaconf import DictConfig, OmegaConf
 from typing import cast
 
@@ -14,7 +14,7 @@ from pytorch_lightning import LightningModule, LightningDataModule, Trainer, see
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor, TQDMProgressBar
 from pytorch_lightning.loggers import TensorBoardLogger
 
-from src.common_utils import get_arg_parser, filter_warnings
+from src.common_utils import get_arg_parser, filter_warnings, init_log
 from src.vocabulary import Vocabulary
 from src.torch_data.custom_samplers import BalancedSampler, HierarchicalRandomBatchSampler
 from src.torch_data.datamodules import SliceDataModule
@@ -38,22 +38,6 @@ gnn_name_map = {
     "gated": "Gated",
     "st": "ST"
 }
-
-def init_log():
-    LOG_DIR = "logs"
-    if not isdir(LOG_DIR):
-        os.makedirs(LOG_DIR)
-    
-    logging.basicConfig(
-        handlers=[
-            logging.FileHandler(join(LOG_DIR, "run_classification.log")),
-            logging.StreamHandler()
-        ],
-        format='%(asctime)s %(levelname)-8s %(message)s',
-        level=logging.INFO,
-        datefmt='%Y-%m-%d %H:%M:%S')
-    logging.info("=========New session=========")
-    logging.info(f"Logging dir: {LOG_DIR}")
 
 def train(model: LightningModule, data_module: LightningDataModule,
           config: DictConfig):
@@ -143,7 +127,7 @@ if __name__ == "__main__":
     if args.sampler not in config.train_sampler_options:
         raise ValueError(f"Sampler {args.sampler} not in options: {config.train_sampler_options}")
 
-    init_log()
+    init_log(splitext(basename(__file__))[0])
     sampler = args.sampler
 
     if config.num_workers != -1:

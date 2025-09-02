@@ -1,4 +1,3 @@
-import os
 import json
 import pickle
 import numpy as np
@@ -8,7 +7,7 @@ import logging
 import networkx as nx
 
 from multiprocessing import cpu_count
-from os.path import join, isdir, splitext
+from os.path import join, basename, splitext
 from omegaconf import DictConfig, OmegaConf
 from typing import cast, List
 from itertools import cycle
@@ -17,26 +16,10 @@ from random import sample
 from tqdm import tqdm
 from pytorch_lightning import seed_everything
 
-from src.common_utils import get_arg_parser, filter_warnings
+from src.common_utils import get_arg_parser, filter_warnings, init_log
 
 dataset_root = ""
 train_slices = []
-
-def init_log():
-    LOG_DIR = "logs"
-    if not isdir(LOG_DIR):
-        os.makedirs(LOG_DIR)
-    
-    logging.basicConfig(
-        handlers=[
-            logging.FileHandler(join(LOG_DIR, "generate_custom_balanced_batches.log")),
-            logging.StreamHandler()
-        ],
-        format='%(asctime)s %(levelname)-8s %(message)s',
-        level=logging.INFO,
-        datefmt='%Y-%m-%d %H:%M:%S')
-    logging.info("=========New session=========")
-    logging.info(f"Logging dir: {LOG_DIR}")
 
 def create_balanced_batches(tuple_list, max_per_label=64):
     """
@@ -323,7 +306,7 @@ if __name__ == "__main__":
     if args.sampler not in config.train_sampler_options:
         raise ValueError(f"Sampler {args.sampler} not in options: {config.train_sampler_options}")
 
-    init_log()
+    init_log(splitext(basename(__file__))[0])
     sampler = args.sampler
 
     if config.num_workers != -1:
