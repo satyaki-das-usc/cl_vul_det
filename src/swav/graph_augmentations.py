@@ -230,8 +230,8 @@ def generate_SF_augmentations(batched_graph: SliceGraphBatch, vocab: Vocabulary,
     slice_graph_list = [get_slice_graph(slice_path) for slice_path in batched_graph.slice_paths]
 
     for slice_graph in slice_graph_list:
-        glob1_views.append(generate_node_set_augmentation(slice_graph))
-        glob2_views.append(generate_edge_set_augmentation(slice_graph))
+        glob1_views.append(generate_node_set_augmentation(slice_graph, vocab, max_len))
+        glob2_views.append(generate_edge_set_augmentation(slice_graph, vocab, max_len))
 
         control_edges = []
         dd_edges = []
