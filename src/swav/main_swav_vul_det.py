@@ -200,9 +200,6 @@ if __name__ == "__main__":
     if args.no_cl_warmup:
         config.hyper_parameters.contrastive_warmup_epochs = 0
 
-    if args.sampler not in config.train_sampler_options:
-        raise ValueError(f"Sampler {args.sampler} not in options: {config.train_sampler_options}")
-
     init_log(splitext(basename(__file__))[0])
 
     if config.num_workers != -1:
