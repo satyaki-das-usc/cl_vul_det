@@ -1,7 +1,7 @@
 from omegaconf import DictConfig
 import torch
 from torch_geometric.data import Batch
-from torch_geometric.nn import TopKPooling, GCNConv, GINEConv, GATv2Conv, GatedGraphConv, GlobalAttention, BatchNorm
+from torch_geometric.nn import TopKPooling, GCNConv, GINEConv, GATv2Conv, GatedGraphConv, GlobalAttention, BatchNorm, AttentionalAggregation
 from torch_geometric.utils import subgraph
 import torch.nn.functional as F
 
@@ -37,7 +37,7 @@ class GraphConvEncoder(torch.nn.Module):
                 TopKPooling(config.hidden_size,
                             ratio=config.pooling_ratio))
 
-        self.attpool = GlobalAttention(torch.nn.Linear(config.hidden_size, 1))
+        self.attpool = AttentionalAggregation(torch.nn.Linear(config.hidden_size, 1))
 
     def forward(self, batched_graph: Batch):
         # [n nodes; rnn hidden]
@@ -95,7 +95,7 @@ class GatedGraphConvEncoder(torch.nn.Module):
                 self, f"hidden_GPL{i}",
                 TopKPooling(config.hidden_size,
                             ratio=config.pooling_ratio))
-        self.attpool = GlobalAttention(torch.nn.Linear(config.hidden_size, 1))
+        self.attpool = AttentionalAggregation(torch.nn.Linear(config.hidden_size, 1))
 
     def forward(self, batched_graph: Batch):
         # [n nodes; rnn hidden]
@@ -145,8 +145,8 @@ class GINEConvEncoder(torch.nn.Module):
             self.bns.append(BatchNorm(self.hidden))
             self.pools.append(TopKPooling(self.hidden, ratio=config.pooling_ratio))
             in_dim = self.hidden
-        
-        self.global_att = GlobalAttention(torch.nn.Linear(self.hidden, 1))
+
+        self.global_att = AttentionalAggregation(torch.nn.Linear(self.hidden, 1))
 
     def forward(self, batched_graph: Batch):
         x = self.encoder(batched_graph.x)
