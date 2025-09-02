@@ -193,7 +193,7 @@ def generate_node_set_augmentation(slice_graph: nx.DiGraph, vocab: Vocabulary, m
     augmented_graph.add_node(aug_node)
     augmented_graph.nodes[aug_node]["sym_code"] = global_augmentation1
     augmented_graph.nodes[aug_node]["code_sym_token"] = tokenize_code_line(global_augmentation1, subtoken=False)
-    augmented_graph = SliceGraph(None, augmented_graph)
+    augmented_graph = SliceGraph(slice_graph=augmented_graph)
     augmented_graph = SliceGraphSample(graph=augmented_graph.to_torch_graph(vocab, max_len),
                         label=augmented_graph.label, slice_path=None)
 
@@ -212,7 +212,7 @@ def generate_edge_set_augmentation(slice_graph: nx.DiGraph, vocab: Vocabulary, m
     augmented_graph.nodes[stmt_node]["code_sym_token"] = tokenize_code_line(global_augmentation2[1], subtoken=False)
     new_edges = [(cond_node, n, {"label": "CONTROLS", "direction": "forward"}) for n in augmented_graph.nodes if n != cond_node]
     augmented_graph.add_edges_from(new_edges)
-    augmented_graph = SliceGraph(None, augmented_graph)
+    augmented_graph = SliceGraph(slice_graph=augmented_graph)
     augmented_graph = SliceGraphSample(graph=augmented_graph.to_torch_graph(vocab, max_len),
                         label=augmented_graph.label, slice_path=None)
 
@@ -250,7 +250,18 @@ def generate_SF_augmentations(batched_graph: SliceGraphBatch, vocab: Vocabulary,
         control_edge_view.remove_edges_from(dd_edges + post_dom_edges)
         isolated = [n for n in control_edge_view.nodes() if control_edge_view.degree(n) == 0]
         control_edge_view.remove_nodes_from(isolated)
-        control_edge_view = SliceGraph(None, control_edge_view)
+        if len(control_edge_view.nodes()) == 0:
+            start_node = f"start"
+            control_edge_view.add_node(start_node)
+            control_edge_view.nodes[start_node]["sym_code"] = ""
+            control_edge_view.nodes[start_node]["code_sym_token"] = tokenize_code_line("", subtoken=False)
+
+            end_node = f"end"
+            control_edge_view.add_node(end_node)
+            control_edge_view.nodes[end_node]["sym_code"] = ""
+            control_edge_view.nodes[end_node]["code_sym_token"] = tokenize_code_line("", subtoken=False)
+            control_edge_view.add_edges_from([(start_node, end_node, {"label": "CONTROLS", "direction": "forward"})])
+        control_edge_view = SliceGraph(slice_graph=control_edge_view)
         control_edge_view = SliceGraphSample(graph=control_edge_view.to_torch_graph(vocab, max_len),
                             label=control_edge_view.label, slice_path=None)
         control_edges_views.append(control_edge_view)
@@ -260,7 +271,18 @@ def generate_SF_augmentations(batched_graph: SliceGraphBatch, vocab: Vocabulary,
         dd_edge_view.remove_edges_from(control_edges + post_dom_edges)
         isolated = [n for n in dd_edge_view.nodes() if dd_edge_view.degree(n) == 0]
         dd_edge_view.remove_nodes_from(isolated)
-        dd_edge_view = SliceGraph(None, dd_edge_view)
+        if len(dd_edge_view.nodes()) == 0:
+            start_node = f"start"
+            dd_edge_view.add_node(start_node)
+            dd_edge_view.nodes[start_node]["sym_code"] = ""
+            dd_edge_view.nodes[start_node]["code_sym_token"] = tokenize_code_line("", subtoken=False)
+
+            end_node = f"end"
+            dd_edge_view.add_node(end_node)
+            dd_edge_view.nodes[end_node]["sym_code"] = ""
+            dd_edge_view.nodes[end_node]["code_sym_token"] = tokenize_code_line("", subtoken=False)
+            dd_edge_view.add_edges_from([(start_node, end_node, {"label": "REACHES", "var": "", "direction": "forward"})])
+        dd_edge_view = SliceGraph(slice_graph=dd_edge_view)
         dd_edge_view = SliceGraphSample(graph=dd_edge_view.to_torch_graph(vocab, max_len),
                             label=dd_edge_view.label, slice_path=None)
         dd_edges_views.append(dd_edge_view)
