@@ -72,7 +72,7 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
             w = F.normalize(w, dim=1, p=2)
             model.swav_prototypes.weight.copy_(w)
         
-        labels = batched_graph.labels
+        labels = batched_graph.labels.to(device)
         batched_graph = batched_graph.graphs.to(device)
         logits, activations, _, _, _ = model(batched_graph)
         projection_loss = projection_criterion(activations, labels)
