@@ -243,9 +243,9 @@ if __name__ == "__main__":
         weight_decay=config.swav.wd
     )
     warmup_lr_schedule = np.linspace(config.swav.start_warmup, config.swav.base_lr, len(train_loader) * config.swav.warmup_epochs)
-    iters = np.arange(len(train_loader) * (config.swav.n_epochs - config.swav.warmup_epochs))
+    iters = np.arange(len(train_loader) * (config.hyper_parameters.n_epochs - config.swav.warmup_epochs))
     cosine_lr_schedule = np.array([config.swav.final_lr + 0.5 * (config.swav.base_lr - config.swav.final_lr) * (1 + \
-                         math.cos(math.pi * t / (len(train_loader) * (config.swav.n_epochs - config.swav.warmup_epochs)))) for t in iters])
+                         math.cos(math.pi * t / (len(train_loader) * (config.hyper_parameters.n_epochs - config.swav.warmup_epochs)))) for t in iters])
     lr_schedule = np.concatenate((warmup_lr_schedule, cosine_lr_schedule))
 
     contrastive_criterion = InfoNCEContrastiveLoss(temperature=config.swav.contrastive.temperature)
