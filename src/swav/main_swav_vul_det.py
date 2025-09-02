@@ -73,8 +73,8 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
             model.swav_prototypes.weight.copy_(w)
         
         labels = batched_graph.labels.to(device)
-        x = batched_graph.graphs.to(device)
-        logits, activations, _, _, _ = model(x)
+        graphs = batched_graph.graphs.to(device)
+        logits, activations, _, _, _ = model(graphs)
         projection_loss = projection_criterion(activations, labels)
         epoch_proj_losses.append(projection_loss.item())
         proj_losses.append(projection_loss.item())
