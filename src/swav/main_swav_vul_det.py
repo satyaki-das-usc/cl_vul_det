@@ -84,7 +84,7 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         ce_losses.append(ce_loss.item())
         
         inputs = generate_SF_augmentations(batched_graph, vocab, config.dataset.token.max_parts)
-        _, _, graph_encodings, _, output = zip(*(model(inp) for inp in inputs))
+        _, _, graph_encodings, _, output = zip(*(model(inp.graphs.to(device)) for inp in inputs))
 
         swav_loss = 0
         for view_id in config.swav.views_for_assign:
