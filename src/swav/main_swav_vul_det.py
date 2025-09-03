@@ -22,7 +22,7 @@ from src.common_utils import get_arg_parser, filter_warnings, init_log
 from src.vocabulary import Vocabulary
 from src.torch_data.datamodules import SliceDataModule
 from src.models.swav_vd import GraphSwAVVD
-from src.models.modules.losses import InfoNCEContrastiveLoss, OrthogonalProjectionLoss
+from src.models.modules.losses import SupConLoss, InfoNCEContrastiveLoss, OrthogonalProjectionLoss
 from src.swav.assignment_protocols import sinkhorn, uot_sinkhorn_gpu
 from src.swav.graph_augmentations import generate_SF_augmentations
 
@@ -36,6 +36,11 @@ proj_losses = []
 ce_losses = []
 swav_losses = []
 contrast_losses = []
+
+contrastive_options = {
+    "supcon": SupConLoss,
+    "info_nce": InfoNCEContrastiveLoss
+}
 
 assignment_functions = {
     "sinkhorn": sinkhorn,
@@ -75,7 +80,7 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         
         labels = batched_graph.labels.to(device)
         graphs = batched_graph.graphs.to(device)
-        logits, activations, _, _, _ = model(graphs)
+        logits, activations, anchor_graph_encodings, _, _ = model(graphs)
         projection_loss = projection_criterion(activations, labels)
         epoch_proj_losses.append(projection_loss.item())
         proj_losses.append(projection_loss.item())
@@ -102,7 +107,10 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         swav_losses.append(swav_loss.item())
 
         h1, h2 = F.normalize(graph_encodings[0], dim=-1), F.normalize(graph_encodings[1], dim=-1)
-        contrastive_loss = contrastive_criterion(h1, h2)
+        if config.swav.contrastive.criterion == "info_nce":
+            contrastive_loss = contrastive_criterion(h1, h2)
+        elif config.swav.contrastive.criterion == "supcon":
+            contrastive_loss = contrastive_criterion(torch.stack([F.normalize(anchor_graph_encodings, dim=-1), h1, h2], dim=1), labels=labels)
         epoch_contrast_losses.append(contrastive_loss.item())
         contrast_losses.append(contrastive_loss.item())
 
@@ -248,7 +256,7 @@ if __name__ == "__main__":
                          math.cos(math.pi * t / (len(train_loader) * (config.hyper_parameters.n_epochs - config.swav.warmup_epochs)))) for t in iters])
     lr_schedule = np.concatenate((warmup_lr_schedule, cosine_lr_schedule))
 
-    contrastive_criterion = InfoNCEContrastiveLoss(temperature=config.swav.contrastive.temperature)
+    contrastive_criterion = contrastive_options[config.swav.contrastive.criterion](temperature=config.swav.contrastive.temperature)
     projection_criterion = OrthogonalProjectionLoss()
 
     proj_losses = []
