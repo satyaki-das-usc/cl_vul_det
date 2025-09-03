@@ -88,7 +88,7 @@ PYTHONPATH="." python src/run_classification.py -s swav &&
 PYTHONPATH="." python src/run_classification.py -s swav --no_cl
 
 
-PYTHONPATH="." python src/evaluate_all_model_configurations.py
+PYTHONPATH="." python src/evaluate_all_model_configurations.py -p saved_models/graph_swav_classification/VF_perts/GINE/IncludeNN/NoCLWarmup/InfoNCEGraphSwAVVD.ckpt
 PYTHONPATH="." python src/generate_nvd_ground_truth.py
 
 
