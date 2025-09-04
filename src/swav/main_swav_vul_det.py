@@ -39,6 +39,7 @@ contrast_losses = []
 
 contrastive_options = {
     "supcon": SupConLoss,
+    "simclr": SupConLoss,
     "info_nce": InfoNCEContrastiveLoss
 }
 
@@ -111,6 +112,8 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
             contrastive_loss = contrastive_criterion(h1, h2)
         elif config.swav.contrastive.criterion == "supcon":
             contrastive_loss = contrastive_criterion(torch.stack([F.normalize(anchor_graph_encodings, dim=-1), h1, h2], dim=1), labels=labels)
+        elif config.swav.contrastive.criterion == "simclr":
+            contrastive_loss = contrastive_criterion(torch.stack([F.normalize(anchor_graph_encodings, dim=-1), h1, h2], dim=1))
         epoch_contrast_losses.append(contrastive_loss.item())
         contrast_losses.append(contrastive_loss.item())
 
@@ -268,7 +271,7 @@ if __name__ == "__main__":
     gnn_name = gnn_name_map[config.gnn.name]
     nn_text = "ExcludeNN" if config.exclude_NNs else "IncludeNN"
     cl_warmup_text = "CLWarmup" if config.hyper_parameters.contrastive_warmup_epochs > 0 else "NoCLWarmup"
-    checkpoint_dir = join(config.model_save_dir, "graph_swav_classification", dataset_name, gnn_name, nn_text, cl_warmup_text)
+    checkpoint_dir = join(config.model_save_dir, "graph_swav_classification", dataset_name, gnn_name, nn_text, cl_warmup_text, config.swav.contrastive.criterion)
     if not exists(checkpoint_dir):
         os.makedirs(checkpoint_dir, exist_ok=True)
     model_name = model.__class__.__name__
