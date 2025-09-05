@@ -93,7 +93,7 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         epoch_proj_losses.append(projection_loss.item())
         proj_losses.append(projection_loss.item())
 
-        regularization_loss = torch.norm(anchor_graph_encodings, dim=-1).sum() + torch.norm(activations, dim=-1).sum()
+        regularization_loss = torch.norm(anchor_graph_encodings, dim=-1).mean() + torch.norm(activations, dim=-1).mean()
         epoch_reg_losses.append(regularization_loss.item())
         reg_losses.append(regularization_loss.item())
         
