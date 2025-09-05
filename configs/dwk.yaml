@@ -138,6 +138,7 @@ hyper_parameters:
   use_warmup_lr: false
   contrastive_warmup_epochs: 0
   projection_weight_factor: 1.0
+  regularization_weight_factor: 0.001
   learning_rate: 0.002
   weight_decay: 0
   decay_gamma: 0.95

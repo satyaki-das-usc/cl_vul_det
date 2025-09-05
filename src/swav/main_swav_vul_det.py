@@ -32,8 +32,9 @@ vocab = None
 config = None
 device = None
 
-proj_losses = []
 ce_losses = []
+proj_losses = []
+reg_losses = []
 swav_losses = []
 contrast_losses = []
 
@@ -63,8 +64,9 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
     model.train()
     progress_bar = tqdm(train_loader, desc="Training")
 
-    epoch_proj_losses = []
     epoch_ce_losses = []
+    epoch_proj_losses = []
+    epoch_reg_losses = []
     epoch_swav_losses = []
     epoch_contrast_losses = []
 
@@ -82,13 +84,18 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         labels = batched_graph.labels.to(device)
         graphs = batched_graph.graphs.to(device)
         logits, activations, anchor_graph_encodings, _, _ = model(graphs)
+        
+        ce_loss = F.cross_entropy(logits, labels)
+        epoch_ce_losses.append(ce_loss.item())
+        ce_losses.append(ce_loss.item())
+        
         projection_loss = projection_criterion(activations, labels)
         epoch_proj_losses.append(projection_loss.item())
         proj_losses.append(projection_loss.item())
 
-        ce_loss = F.cross_entropy(logits, labels)
-        epoch_ce_losses.append(ce_loss.item())
-        ce_losses.append(ce_loss.item())
+        regularization_loss = torch.norm(anchor_graph_encodings, dim=-1).sum() + torch.norm(activations, dim=-1).sum()
+        epoch_reg_losses.append(regularization_loss.item())
+        reg_losses.append(regularization_loss.item())
         
         inputs = generate_SF_augmentations(batched_graph, vocab, config.dataset.token.max_parts)
         _, _, graph_encodings, _, output = zip(*(model(inp.graphs.to(device)) for inp in inputs))
@@ -118,8 +125,9 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         contrast_losses.append(contrastive_loss.item())
 
         progress_bar.set_postfix({
-            'proj': projection_loss.item(),
             "ce": ce_loss.item(),
+            'proj': projection_loss.item(),
+            'reg': regularization_loss.item(),
             'swav': swav_loss.item(),
             'contrast': contrastive_loss.item()
         })
@@ -127,6 +135,7 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         loss = (
             ce_loss
             + config.hyper_parameters.projection_weight_factor * projection_loss
+            + config.hyper_parameters.regularization_weight_factor * regularization_loss
             + config.swav.weight_factor * swav_loss
             + config.swav.weight_factor * config.swav.contrastive.lambda_h * contrastive_loss
         )
@@ -142,7 +151,7 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
 
         optimizer.step()
 
-    logging.info(f"Epoch {epoch + 1} - Cross-Entropy Loss: {np.mean(epoch_ce_losses):.4f}, Projection Loss: {np.mean(epoch_proj_losses):.4f}, SwAV Loss: {np.mean(epoch_swav_losses):.4f}, Contrastive Loss: {np.mean(epoch_contrast_losses):.4f}")
+    logging.info(f"Epoch {epoch + 1} - Cross-Entropy Loss: {np.mean(epoch_ce_losses):.4f}, Projection Loss: {np.mean(epoch_proj_losses):.4f}, Regularization Loss: {np.mean(epoch_reg_losses):.4f}, SwAV Loss: {np.mean(epoch_swav_losses):.4f}, Contrastive Loss: {np.mean(epoch_contrast_losses):.4f}")
 
 def eval(model, val_loader):
     progress_bar = tqdm(val_loader, desc="Validation")
@@ -287,8 +296,9 @@ if __name__ == "__main__":
         torch.save(model.state_dict(), checkpoint_path)
         logging.info(f"New best model saved with F1: {best_val_f1:.4f}")
 
-    plt.plot(proj_losses, label='Projection Loss')
     plt.plot(ce_losses, label='Cross-Entropy Loss')
+    plt.plot(proj_losses, label='Projection Loss')
+    plt.plot(reg_losses, label='Regularization Loss')
     plt.plot(swav_losses, label='SwAV Loss')
     plt.plot(contrast_losses, label='Contrastive Loss')
     plt.xlabel('Iteration')
