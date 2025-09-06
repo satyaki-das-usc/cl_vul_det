@@ -90,6 +90,8 @@ def get_slices_with_direction(CPG: nx.DiGraph, line_no: int, vul_lines: Set[int]
         backward_slice_graph, backward_slice_lines = get_backward_slice_graph(CPG, line_no)
         slice_lines = forward_slice_lines | backward_slice_lines
         slice_graph = CPG.subgraph(list(slice_lines)).copy()
+        for u, v, edge_data in slice_graph.edges(data=True):
+            edge_data["direction"] = "forward"
     else:
         raise ValueError(f"Invalid slice direction: {direction}")
 
