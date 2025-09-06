@@ -59,7 +59,9 @@ class SliceGraph:
                 edge_index.append((self.node_to_idx[f"{u}"], self.node_to_idx[f"{v}"]))
                 edge_attr.append((vocab.get_id(data["label"]), vocab.get_id(data["var"]) if "var" in data else vocab.get_pad_id()))
             elif data["direction"] == "backward":
-                edge_index.append((self.node_to_idx[f"{v}"], self.node_to_idx[f"{u}"]))
-                edge_attr.append((vocab.get_id(edge_type_map[data["label"]]), vocab.get_id(data["var"]) if "var" in data else vocab.get_pad_id()))
+                edge_index.append((self.node_to_idx[f"{u}"], self.node_to_idx[f"{v}"]))
+                edge_attr.append((vocab.get_id(data["label"]), vocab.get_id(data["var"]) if "var" in data else vocab.get_pad_id()))
+                # edge_index.append((self.node_to_idx[f"{v}"], self.node_to_idx[f"{u}"]))
+                # edge_attr.append((vocab.get_id(edge_type_map[data["label"]]), vocab.get_id(data["var"]) if "var" in data else vocab.get_pad_id()))
             
         return Data(x=node_ids, edge_index=torch.tensor(edge_index, dtype=torch.long).t().contiguous(), edge_attr=torch.tensor(edge_attr, dtype=torch.long))

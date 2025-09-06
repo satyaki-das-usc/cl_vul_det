@@ -13,6 +13,7 @@ diff_folder: diff
 source_root_folder: source-code
 csv_folder: csv
 slice_folder: slice
+deepwukong_slice_folder: XFG
 VF_perts_root: VF_perts
 SF_perts_root: SF_perts
 nodes_filename: nodes.csv
