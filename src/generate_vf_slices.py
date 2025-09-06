@@ -88,8 +88,8 @@ def get_slices_with_direction(CPG: nx.DiGraph, line_no: int, vul_lines: Set[int]
     elif direction == "both":
         forward_slice_graph, forward_slice_lines = get_forward_slice_graph(CPG, line_no)
         backward_slice_graph, backward_slice_lines = get_backward_slice_graph(CPG, line_no)
-        slice_graph = nx.compose(forward_slice_graph, backward_slice_graph)
         slice_lines = forward_slice_lines | backward_slice_lines
+        slice_graph = CPG.subgraph(list(slice_lines)).copy()
     else:
         raise ValueError(f"Invalid slice direction: {direction}")
 
