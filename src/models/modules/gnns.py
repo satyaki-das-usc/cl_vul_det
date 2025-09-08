@@ -1,7 +1,7 @@
 from omegaconf import DictConfig
 import torch
 from torch_geometric.data import Batch
-from torch_geometric.nn import TopKPooling, GCNConv, GINEConv, GATv2Conv, GatedGraphConv, GlobalAttention, BatchNorm, AttentionalAggregation
+from torch_geometric.nn import TopKPooling, GCNConv, GINConv, GINEConv, GATv2Conv, GatedGraphConv, GlobalAttention, BatchNorm, AttentionalAggregation
 from torch_geometric.utils import subgraph
 import torch.nn.functional as F
 
@@ -135,13 +135,23 @@ class GINEConvEncoder(torch.nn.Module):
         num_layers = config.n_hidden_layers
 
         for _ in range(num_layers):
-            self.convs.append(GINEConv(
-                nn=torch.nn.Sequential(
-                    torch.nn.Linear(in_dim, self.hidden),
-                    torch.nn.ReLU(),
-                    torch.nn.Linear(self.hidden, self.hidden)
+            if self.use_edge_attr:
+                conv_layer = GINEConv(
+                    nn=torch.nn.Sequential(
+                        torch.nn.Linear(in_dim, self.hidden),
+                        torch.nn.ReLU(),
+                        torch.nn.Linear(self.hidden, self.hidden)
+                    )
                 )
-            ))
+            else:
+                conv_layer = GINConv(
+                    nn=torch.nn.Sequential(
+                        torch.nn.Linear(in_dim, self.hidden),
+                        torch.nn.ReLU(),
+                        torch.nn.Linear(self.hidden, self.hidden)
+                    )
+                )
+            self.convs.append(conv_layer)
             self.bns.append(BatchNorm(self.hidden))
             self.pools.append(TopKPooling(self.hidden, ratio=config.pooling_ratio))
             in_dim = self.hidden
