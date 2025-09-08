@@ -283,7 +283,8 @@ if __name__ == "__main__":
     contrastive_text = "NoContrastive" if config.hyper_parameters.lambdas.contrastive == 0.0 else config.swav.contrastive.criterion
     do_swav = "NoSwAV" if config.hyper_parameters.lambdas.swav == 0.0 else "DoSwAV"
     gnn_attention_only = "GNNAttentionOnly" if config.gnn.attention_only else "GNNWithPooling"
-    checkpoint_dir = join(config.model_save_dir, "graph_swav_classification", dataset_name, gnn_name, nn_text, cl_warmup_text, do_swav, contrastive_text, gnn_attention_only)
+    use_edge_attr = "WithEdgeAttr" if config.gnn.use_edge_attr else "NoEdgeAttr"
+    checkpoint_dir = join(config.model_save_dir, "graph_swav_classification", dataset_name, gnn_name, nn_text, cl_warmup_text, do_swav, contrastive_text, gnn_attention_only, use_edge_attr)
     if not exists(checkpoint_dir):
         os.makedirs(checkpoint_dir, exist_ok=True)
     model_name = model.__class__.__name__

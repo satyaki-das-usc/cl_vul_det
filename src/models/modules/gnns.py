@@ -124,6 +124,7 @@ class GINEConvEncoder(torch.nn.Module):
         self.encoder = STEncoder(config, vocab, vocabulary_size, pad_idx)
         self.hidden = config.hidden_size
         self.attention_only = config.attention_only
+        self.use_edge_attr = config.use_edge_attr
 
         # Build sequence of conv/pool layers with skip and gating
         self.convs = torch.nn.ModuleList()
@@ -154,7 +155,10 @@ class GINEConvEncoder(torch.nn.Module):
 
         out = 0
         for conv, bn, pool in zip(self.convs, self.bns, self.pools):
-            x = conv(x, edge_index, edge_attr)
+            if self.use_edge_attr:
+                x = conv(x, edge_index, edge_attr)
+            else:
+                x = conv(x, edge_index)
             if self.attention_only:
                 continue
             x = bn(x)
