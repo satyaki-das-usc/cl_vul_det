@@ -288,6 +288,7 @@ if __name__ == "__main__":
         os.makedirs(checkpoint_dir, exist_ok=True)
     model_name = model.__class__.__name__
     checkpoint_path = join(checkpoint_dir, f"{model_name}.ckpt")
+    logging.info(f"Checkpoint directory: {checkpoint_dir}")
     
     best_val_f1 = 0.0
     for epoch in range(config.hyper_parameters.n_epochs):
