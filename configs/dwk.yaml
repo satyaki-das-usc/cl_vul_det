@@ -104,6 +104,7 @@ gnn:
   embed_size: 256
   hidden_size: 256
   pooling_ratio: 0.8
+  attention_only: true
   drop_out: 0.5
   n_hidden_layers: 3
   n_head: 3
@@ -121,6 +122,12 @@ classifier:
   n_classes: 2
   drop_out: 0.5
 hyper_parameters:
+  lambdas:
+    classification: 1.0
+    projection: 1.0
+    regularization: 0.01
+    swav: 0.7
+    contrastive: 0.7
   temperature: 0.2
   vector_length: 128
   n_epochs: 100

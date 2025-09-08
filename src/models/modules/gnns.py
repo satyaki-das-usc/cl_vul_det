@@ -123,7 +123,6 @@ class GINEConvEncoder(torch.nn.Module):
         super(GINEConvEncoder, self).__init__()
         self.encoder = STEncoder(config, vocab, vocabulary_size, pad_idx)
         self.hidden = config.hidden_size
-        self.edge_dim = config.edge_dim
 
         # Build sequence of conv/pool layers with skip and gating
         self.convs = torch.nn.ModuleList()
@@ -139,8 +138,7 @@ class GINEConvEncoder(torch.nn.Module):
                     torch.nn.Linear(in_dim, self.hidden),
                     torch.nn.ReLU(),
                     torch.nn.Linear(self.hidden, self.hidden)
-                ),
-                edge_dim=self.edge_dim  # ensure edge_feature→node_dim alignment
+                )
             ))
             self.bns.append(BatchNorm(self.hidden))
             self.pools.append(TopKPooling(self.hidden, ratio=config.pooling_ratio))
@@ -151,19 +149,25 @@ class GINEConvEncoder(torch.nn.Module):
     def forward(self, batched_graph: Batch):
         x = self.encoder(batched_graph.x)
         edge_index, edge_attr, batch = batched_graph.edge_index, batched_graph.edge_attr, batched_graph.batch
+        edge_attr = self.encoder(edge_attr)
 
         out = 0
         for conv, bn, pool in zip(self.convs, self.bns, self.pools):
-            x = conv(x, edge_index, edge_attr.float())
+            x = conv(x, edge_index, edge_attr)
+            if self.__config.gnn.attention_only:
+                continue
             x = bn(x)
             x = F.relu(x)
             x = F.dropout(x, p=0.1, training=self.training)
 
-            x, edge_index, edge_attr, batch, _, _ = pool(x, edge_index, edge_attr.float(), batch)
+            x, edge_index, edge_attr, batch, _, _ = pool(x, edge_index, edge_attr, batch)
             # TopKPooling returns pooled edge_attr — no need for manual subgraph()
 
             out += self.global_att(x, batch)  # residual-summed graph vector
 
+        if self.__config.gnn.attention_only:
+            out = self.global_att(x, batch)
+        
         return out  # graph-level embeddings
 
 class GraphSwAVModel(torch.nn.Module):

@@ -133,11 +133,11 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         })
 
         loss = (
-            ce_loss
-            + config.hyper_parameters.projection_weight_factor * projection_loss
-            + config.hyper_parameters.regularization_weight_factor * regularization_loss
-            + config.swav.weight_factor * swav_loss
-            + config.swav.weight_factor * config.swav.contrastive.lambda_h * contrastive_loss
+            config.hyper_parameters.lambdas.classification * ce_loss
+            + config.hyper_parameters.lambdas.projection * projection_loss
+            + config.hyper_parameters.lambdas.regularization * regularization_loss
+            + config.hyper_parameters.lambdas.swav * swav_loss
+            + config.hyper_parameters.lambdas.contrastive * contrastive_loss
         )
 
         optimizer.zero_grad()
@@ -280,7 +280,10 @@ if __name__ == "__main__":
     gnn_name = gnn_name_map[config.gnn.name]
     nn_text = "ExcludeNN" if config.exclude_NNs else "IncludeNN"
     cl_warmup_text = "CLWarmup" if config.hyper_parameters.contrastive_warmup_epochs > 0 else "NoCLWarmup"
-    checkpoint_dir = join(config.model_save_dir, "graph_swav_classification", dataset_name, gnn_name, nn_text, cl_warmup_text, config.swav.contrastive.criterion)
+    contrastive_text = "NoContrastive" if config.hyper_parameters.lambdas.contrastive == 0.0 else config.swav.contrastive.criterion
+    do_swav = "NoSwAV" if config.hyper_parameters.lambdas.swav == 0.0 else "DoSwAV"
+    gnn_attention_only = "GNNAttentionOnly" if config.gnn.attention_only else "GNNWithPooling"
+    checkpoint_dir = join(config.model_save_dir, "graph_swav_classification", dataset_name, gnn_name, nn_text, cl_warmup_text, do_swav, contrastive_text, gnn_attention_only)
     if not exists(checkpoint_dir):
         os.makedirs(checkpoint_dir, exist_ok=True)
     model_name = model.__class__.__name__
