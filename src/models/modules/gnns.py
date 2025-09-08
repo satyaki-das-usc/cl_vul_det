@@ -123,6 +123,7 @@ class GINEConvEncoder(torch.nn.Module):
         super(GINEConvEncoder, self).__init__()
         self.encoder = STEncoder(config, vocab, vocabulary_size, pad_idx)
         self.hidden = config.hidden_size
+        self.attention_only = config.attention_only
 
         # Build sequence of conv/pool layers with skip and gating
         self.convs = torch.nn.ModuleList()
@@ -154,7 +155,7 @@ class GINEConvEncoder(torch.nn.Module):
         out = 0
         for conv, bn, pool in zip(self.convs, self.bns, self.pools):
             x = conv(x, edge_index, edge_attr)
-            if self.__config.gnn.attention_only:
+            if self.attention_only:
                 continue
             x = bn(x)
             x = F.relu(x)
@@ -165,7 +166,7 @@ class GINEConvEncoder(torch.nn.Module):
 
             out += self.global_att(x, batch)  # residual-summed graph vector
 
-        if self.__config.gnn.attention_only:
+        if self.attention_only:
             out = self.global_att(x, batch)
         
         return out  # graph-level embeddings
