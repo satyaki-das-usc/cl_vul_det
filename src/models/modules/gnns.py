@@ -129,7 +129,6 @@ class GINEConvEncoder(torch.nn.Module):
         # Build sequence of conv/pool layers with skip and gating
         self.convs = torch.nn.ModuleList()
         self.pools = torch.nn.ModuleList()
-        self.bns = torch.nn.ModuleList()
 
         in_dim = config.rnn.hidden_size  # from STEncoder
         num_layers = config.n_hidden_layers
@@ -140,19 +139,18 @@ class GINEConvEncoder(torch.nn.Module):
                     nn=torch.nn.Sequential(
                         torch.nn.Linear(in_dim, self.hidden),
                         torch.nn.ReLU(),
-                        torch.nn.Linear(self.hidden, self.hidden)
-                    )
+                        torch.nn.Dropout(config.drop_out)
+                    ), train_eps=config.train_eps
                 )
             else:
                 conv_layer = GINConv(
                     nn=torch.nn.Sequential(
                         torch.nn.Linear(in_dim, self.hidden),
                         torch.nn.ReLU(),
-                        torch.nn.Linear(self.hidden, self.hidden)
-                    )
+                        torch.nn.Dropout(config.drop_out)
+                    ), train_eps=config.train_eps
                 )
             self.convs.append(conv_layer)
-            self.bns.append(BatchNorm(self.hidden))
             self.pools.append(TopKPooling(self.hidden, ratio=config.pooling_ratio))
             in_dim = self.hidden
 
@@ -164,16 +162,13 @@ class GINEConvEncoder(torch.nn.Module):
         edge_attr = self.encoder(edge_attr)
 
         out = 0
-        for conv, bn, pool in zip(self.convs, self.bns, self.pools):
+        for conv, pool in zip(self.convs, self.pools):
             if self.use_edge_attr:
                 x = conv(x, edge_index, edge_attr)
             else:
                 x = conv(x, edge_index)
             if self.attention_only:
                 continue
-            x = bn(x)
-            x = F.relu(x)
-            x = F.dropout(x, p=0.1, training=self.training)
 
             x, edge_index, edge_attr, batch, _, _ = pool(x, edge_index, edge_attr, batch)
             # TopKPooling returns pooled edge_attr — no need for manual subgraph()
