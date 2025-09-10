@@ -320,15 +320,23 @@ if __name__ == "__main__":
     plt.legend()
     plt.grid(True)
     plt.title('Training Loss Convergence')
-    plt.savefig(join(dataset_root, 'training_losses.png'), bbox_inches='tight')
+    plt.savefig(join(checkpoint_dir, 'training_losses.png'), bbox_inches='tight')
     plt.close()
 
-    logging.info("Testing model...")
+    logging.info("Testing model after training...")
     test_stats = test(model, data_module.test_dataloader())
     logging.info(f"Test Stats: {test_stats}")
     logging.info("Testing completed.")
 
-    with open(join(dataset_root, "test_statistics.json"), "w") as wfi:
+    with open(join(checkpoint_dir, "test_statistics_epoch100.json"), "w") as wfi:
+        json.dump(test_stats, wfi, indent=4)
+    
+    logging.info("Testing model with best validation F1...")
+    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+    test_stats = test(model, data_module.test_dataloader())
+    logging.info(f"Test Stats: {test_stats}")
+    logging.info("Testing completed.")
+    with open(join(checkpoint_dir, "test_statistics_best_val_f1.json"), "w") as wfi:
         json.dump(test_stats, wfi, indent=4)
     
     logging.info(f"Completed.")
