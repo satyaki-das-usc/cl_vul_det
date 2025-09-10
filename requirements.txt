@@ -19,6 +19,7 @@ omegaconf
 tqdm
 networkx
 pandas
+imbalanced-learn
 scikit-learn
 commode-utils
 matplotlib

@@ -13,6 +13,7 @@ from omegaconf import DictConfig, OmegaConf
 from typing import cast
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from imblearn.under_sampling import ClusterCentroids
 
 from pytorch_lightning import seed_everything
 import torch.nn.functional as F
@@ -31,6 +32,7 @@ projection_criterion = None
 vocab = None
 config = None
 device = None
+resampling_criterion = None
 
 ce_losses = []
 proj_losses = []
@@ -88,8 +90,14 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         ce_loss = F.cross_entropy(logits, labels)
         epoch_ce_losses.append(ce_loss.item())
         ce_losses.append(ce_loss.item())
-        
-        projection_loss = projection_criterion(activations, labels)
+
+        activations_resampled, labels_resampled = resampling_criterion.fit_resample(activations.detach().cpu().numpy(), labels.detach().cpu().numpy())
+        if activations_resampled.shape[0] > 2:
+            activations_resampled = torch.tensor(activations_resampled, dtype=torch.float32).to(device)
+            labels_resampled = torch.tensor(labels_resampled, dtype=torch.long).to(device)
+            projection_loss = projection_criterion(activations_resampled, labels_resampled)
+        else:
+            projection_loss = projection_criterion(activations, labels)
         epoch_proj_losses.append(projection_loss.item())
         proj_losses.append(projection_loss.item())
 
@@ -270,6 +278,7 @@ if __name__ == "__main__":
 
     contrastive_criterion = contrastive_options[config.swav.contrastive.criterion](temperature=config.swav.contrastive.temperature)
     projection_criterion = OrthogonalProjectionLoss()
+    resampling_criterion = ClusterCentroids(sampling_strategy='auto', random_state=42)
 
     proj_losses = []
     ce_losses = []

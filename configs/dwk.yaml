@@ -105,7 +105,7 @@ gnn:
   hidden_size: 256
   pooling_ratio: 0.8
   attention_only: true
-  use_edge_attr: false
+  use_edge_attr: true
   drop_out: 0.5
   n_hidden_layers: 3
   n_head: 3
