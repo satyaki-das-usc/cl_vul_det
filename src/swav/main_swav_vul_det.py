@@ -91,7 +91,10 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         epoch_ce_losses.append(ce_loss.item())
         ce_losses.append(ce_loss.item())
 
-        activations_resampled, labels_resampled = resampling_criterion.fit_resample(activations.detach().cpu().numpy(), labels.detach().cpu().numpy())
+        activations_resampled = torch.empty((0, activations.shape[1]), dtype=torch.float32)
+
+        if torch.unique(labels).size(0) > 1:
+            activations_resampled, labels_resampled = resampling_criterion.fit_resample(activations.detach().cpu().numpy(), labels.detach().cpu().numpy())
         if activations_resampled.shape[0] > 2:
             activations_resampled = torch.tensor(activations_resampled, dtype=torch.float32).to(device)
             labels_resampled = torch.tensor(labels_resampled, dtype=torch.long).to(device)
