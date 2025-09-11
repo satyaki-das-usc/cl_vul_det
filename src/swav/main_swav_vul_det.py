@@ -15,12 +15,14 @@ from tqdm import tqdm
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from imblearn.under_sampling import ClusterCentroids
 
+from torch_geometric.loader import DataLoader, ImbalancedSampler
 from pytorch_lightning import seed_everything
 import torch.nn.functional as F
 from timm.optim.lars import Lars
 
 from src.common_utils import get_arg_parser, filter_warnings, init_log
 from src.vocabulary import Vocabulary
+from src.torch_data.datasets import SliceDataset
 from src.torch_data.datamodules import SliceDataModule
 from src.models.swav_vd import GraphSwAVVD
 from src.models.modules.losses import SupConLoss, InfoNCEContrastiveLoss, OrthogonalProjectionLoss
@@ -93,8 +95,8 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
 
         activations_resampled = torch.empty((0, activations.shape[1]), dtype=torch.float32)
 
-        if torch.unique(labels).size(0) > 1:
-            activations_resampled, labels_resampled = resampling_criterion.fit_resample(activations.detach().cpu().numpy(), labels.detach().cpu().numpy())
+        # if torch.unique(labels).size(0) > 1:
+        #     activations_resampled, labels_resampled = resampling_criterion.fit_resample(activations.detach().cpu().numpy(), labels.detach().cpu().numpy())
         if activations_resampled.shape[0] > 2:
             activations_resampled = torch.tensor(activations_resampled, dtype=torch.float32).to(device)
             labels_resampled = torch.tensor(labels_resampled, dtype=torch.long).to(device)
@@ -260,7 +262,13 @@ if __name__ == "__main__":
     model = GraphSwAVVD(config, vocab, vocab_size, pad_idx).to(device)
     logging.info("Model building completed.")
 
-    train_loader = data_module.train_dataloader()
+    logging.info("Building train loader...")
+    train_slices_filepath = join(dataset_root, config.train_slices_filename)
+    train_dataset = SliceDataset(train_slices_filepath, config, vocab)
+    sampler = ImbalancedSampler(torch.tensor([data.label for data in train_dataset], dtype=torch.long))
+    train_loader = DataLoader(train_dataset, batch_size=config.hyper_parameters.batch_size, sampler=sampler)
+    logging.info("Train loader building completed.")
+    # train_loader = data_module.train_dataloader()
 
     # optimizer = torch.optim.AdamW([{
     #             "params": p
