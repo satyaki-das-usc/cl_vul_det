@@ -6,6 +6,7 @@ temp/data/
 ts_logger/
 plot/
 saved_models/
+*__pycache__*
 *.json
 *.wv
 *.pyc
