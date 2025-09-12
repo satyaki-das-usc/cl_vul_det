@@ -138,16 +138,14 @@ class GINEConvEncoder(torch.nn.Module):
                 conv_layer = GINEConv(
                     nn=torch.nn.Sequential(
                         torch.nn.Linear(in_dim, self.hidden),
-                        torch.nn.ReLU(),
-                        torch.nn.Dropout(config.drop_out)
+                        torch.nn.ReLU()
                     ), train_eps=config.train_eps
                 )
             else:
                 conv_layer = GINConv(
                     nn=torch.nn.Sequential(
                         torch.nn.Linear(in_dim, self.hidden),
-                        torch.nn.ReLU(),
-                        torch.nn.Dropout(config.drop_out)
+                        torch.nn.ReLU()
                     ), train_eps=config.train_eps
                 )
             self.convs.append(conv_layer)

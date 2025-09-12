@@ -2,7 +2,9 @@ import os
 import json
 import torch
 import math
+import pickle
 import numpy as np
+import networkx as nx
 import matplotlib.pyplot as plt
 
 import logging
@@ -91,7 +93,6 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         
         ce_loss = F.cross_entropy(logits, labels)
         epoch_ce_losses.append(ce_loss.item())
-        ce_losses.append(ce_loss.item())
 
         activations_resampled = torch.empty((0, activations.shape[1]), dtype=torch.float32)
 
@@ -104,11 +105,9 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         else:
             projection_loss = projection_criterion(activations, labels)
         epoch_proj_losses.append(projection_loss.item())
-        proj_losses.append(projection_loss.item())
 
         regularization_loss = torch.norm(anchor_graph_encodings, dim=-1).mean() + torch.norm(activations, dim=-1).mean()
         epoch_reg_losses.append(regularization_loss.item())
-        reg_losses.append(regularization_loss.item())
         
         inputs = generate_SF_augmentations(batched_graph, vocab, config.dataset.token.max_parts)
         _, _, graph_encodings, _, output = zip(*(model(inp.graphs.to(device)) for inp in inputs))
@@ -125,7 +124,6 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
             swav_loss += subloss / (np.sum(config.swav.nmb_views) - 1)
         swav_loss /= len(config.swav.views_for_assign)
         epoch_swav_losses.append(swav_loss.item())
-        swav_losses.append(swav_loss.item())
 
         h1, h2 = F.normalize(graph_encodings[0], dim=-1), F.normalize(graph_encodings[1], dim=-1)
         if config.swav.contrastive.criterion == "info_nce":
@@ -135,7 +133,6 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         elif config.swav.contrastive.criterion == "simclr":
             contrastive_loss = contrastive_criterion(torch.stack([F.normalize(anchor_graph_encodings, dim=-1), h1, h2], dim=1))
         epoch_contrast_losses.append(contrastive_loss.item())
-        contrast_losses.append(contrastive_loss.item())
 
         progress_bar.set_postfix({
             "ce": ce_loss.item(),
@@ -165,6 +162,11 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         optimizer.step()
 
     logging.info(f"Epoch {epoch + 1} - Cross-Entropy Loss: {np.mean(epoch_ce_losses):.4f}, Projection Loss: {np.mean(epoch_proj_losses):.4f}, Regularization Loss: {np.mean(epoch_reg_losses):.4f}, SwAV Loss: {np.mean(epoch_swav_losses):.4f}, Contrastive Loss: {np.mean(epoch_contrast_losses):.4f}")
+    ce_losses.append(float(np.mean(epoch_ce_losses)))
+    proj_losses.append(float(np.mean(epoch_proj_losses)))
+    reg_losses.append(float(np.mean(epoch_reg_losses)))
+    swav_losses.append(float(np.mean(epoch_swav_losses)))
+    contrast_losses.append(float(np.mean(epoch_contrast_losses)))
 
 def eval(model, val_loader):
     progress_bar = tqdm(val_loader, desc="Validation")
@@ -255,20 +257,24 @@ if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     logging.info("Loading data module...")
-    data_module = SliceDataModule(config, vocab, use_temp_data=args.use_temp_data)
+    train_slices_filepath = join(dataset_root, config.train_slices_filename)
+    logging.info(f"Loading training slice paths list from {train_slices_filepath}...")
+    with open(train_slices_filepath, "r") as rfi:
+        train_slices = json.load(rfi)
+    logging.info(f"Completed. Loaded {len(train_slices)} slices.")
+    ys = []
+    for slice_path in tqdm(train_slices, desc=f"Slice files"):
+        with open(slice_path, "rb") as rbfi:
+            slice_graph: nx.DiGraph = pickle.load(rbfi)
+            ys.append(slice_graph.graph["label"])
+    sampler = ImbalancedSampler(torch.tensor(ys, dtype=torch.long))
+    data_module = SliceDataModule(config, vocab, train_sampler=sampler, use_temp_data=args.use_temp_data)
     logging.info("Data module loading completed.")
 
     logging.info("Building model...")
     model = GraphSwAVVD(config, vocab, vocab_size, pad_idx).to(device)
     logging.info("Model building completed.")
-
-    logging.info("Building train loader...")
-    train_slices_filepath = join(dataset_root, config.train_slices_filename)
-    train_dataset = SliceDataset(train_slices_filepath, config, vocab)
-    sampler = ImbalancedSampler(torch.tensor([data.label for data in train_dataset], dtype=torch.long))
-    train_loader = DataLoader(train_dataset, batch_size=config.hyper_parameters.batch_size, sampler=sampler)
-    logging.info("Train loader building completed.")
-    # train_loader = data_module.train_dataloader()
+    train_loader = data_module.train_dataloader()
 
     # optimizer = torch.optim.AdamW([{
     #             "params": p

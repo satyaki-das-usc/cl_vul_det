@@ -43,7 +43,8 @@ class SliceDataModule(LightningDataModule):
         if self.__train_sampler:
             return DataLoader(
                 train_dataset,
-                batch_sampler=self.__train_sampler,
+                batch_size=self.__config.hyper_parameters.batch_size,
+                sampler=self.__train_sampler,
                 num_workers=self.__n_workers,
                 collate_fn=self.collate_wrapper,
                 pin_memory=True,
