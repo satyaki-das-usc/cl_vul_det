@@ -35,21 +35,24 @@ class GraphSwAVVD(nn.Module):
         )
         self.swav_prototypes = nn.Linear(config.swav.projection_dim, config.swav.nmb_prototypes, bias=False)
         # hidden layers
-        layers = [
-            nn.Linear(config.gnn.hidden_size, config.classifier.hidden_size),
-            nn.ReLU(),
-            nn.Dropout(config.classifier.drop_out)
-        ]
         if config.classifier.n_hidden_layers < 1:
             raise ValueError(
                 f"Invalid layers number ({config.classifier.n_hidden_layers})")
+        in_dim = config.gnn.hidden_size
+        layers = []
         for _ in range(config.classifier.n_hidden_layers - 1):
             layers += [
-                nn.Linear(config.classifier.hidden_size, config.classifier.hidden_size),
+                nn.Linear(in_dim, config.classifier.hidden_size),
                 nn.ReLU(),
                 nn.Dropout(config.classifier.drop_out)
             ]
+            in_dim = config.classifier.hidden_size
         self.__hidden_layers = nn.Sequential(*layers)
+        
+        self.penultimate_layer = nn.Linear(in_dim, config.classifier.hidden_size)
+        self.penultimate_layer_activation = nn.ReLU()
+        self.penultimate_layer_dropout = nn.Dropout(config.classifier.drop_out)
+        
         self.__classifier = nn.Linear(config.classifier.hidden_size, config.classifier.n_classes)
     
     def forward(self, batch: Batch):
@@ -66,6 +69,6 @@ class GraphSwAVVD(nn.Module):
         if self.swav_l2norm:
             swav_embeddings = F.normalize(swav_embeddings, dim=-1, p=2)
 
-        activations = self.__hidden_layers(graph_encodings)
+        activations = self.penultimate_layer_activation(self.penultimate_layer(self.__hidden_layers(graph_encodings)))
         # [n_SliceGraph; n_classes]
-        return self.__classifier(activations), activations, graph_encodings, swav_embeddings, self.swav_prototypes(swav_embeddings)
+        return self.__classifier(self.penultimate_layer_dropout(activations)), activations, graph_encodings, swav_embeddings, self.swav_prototypes(swav_embeddings)
