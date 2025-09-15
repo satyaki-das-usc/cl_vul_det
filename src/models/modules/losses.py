@@ -126,43 +126,32 @@ class InfoNCEContrastiveLoss(nn.Module):
         
         return loss
 
-class OrthogonalProjectionLoss(torch.nn.Module):
-    def __init__(self, gamma: float = 1.0):
-        super().__init__()
-        self.gamma = gamma  # scales the inter-class term
+class OrthogonalProjectionLoss(nn.Module):
+    """Orthogonal Projection Loss: https://arxiv.org/pdf/2103.14021.
+    It tries to minimize the cosine similarity of positive pairs and
+    maximize the cosine similarity of negative pairs."""
+    def __init__(self, gamma=0.5):
+        super(OrthogonalProjectionLoss, self).__init__()
+        self.gamma = gamma
 
-    def forward(self, features: torch.Tensor, targets: torch.Tensor):
-        """
-        features: tensor of shape (batch_size, feature_dim)
-        targets: tensor of shape (batch_size,) with class indices
-        """
-        # Normalize features for cosine similarity
-        features = F.normalize(features, dim=1)
-        batch_size = features.size(0)
+    def forward(self, features, labels):
+        device = (torch.device('cuda') if features.is_cuda else torch.device('cpu'))
 
-        # Create a similarity matrix: (batch_size, batch_size)
-        sim_matrix = features @ features.t()
+        #  features are normalized
+        features = F.normalize(features, p=2, dim=1)
 
-        # Masks for same-class and different-class pairs
-        targets = targets.view(-1, 1)
-        same_mask = targets == targets.t()
-        diff_mask = ~same_mask
+        labels = labels[:, None]  # extend dim
 
-        # Exclude self-similarity for same-class computations
-        diag_mask = torch.eye(batch_size, dtype=torch.bool, device=features.device)
-        same_mask = same_mask & ~diag_mask
+        mask = torch.eq(labels, labels.t()).bool().to(device)
+        eye = torch.eye(mask.shape[0], mask.shape[1]).bool().to(device)
 
-        # Compute mean similarities
-        if same_mask.sum() > 0:
-            s = sim_matrix[same_mask].mean()
-        else:
-            s = torch.tensor(1.0, device=features.device)
+        mask_pos = mask.masked_fill(eye, 0).float()
+        mask_neg = (~mask).float()
+        dot_prod = torch.matmul(features, features.t())
 
-        if diff_mask.sum() > 0:
-            d = sim_matrix[diff_mask].mean()
-        else:
-            d = torch.tensor(0.0, device=features.device)
+        pos_pairs_mean = (mask_pos * dot_prod).sum() / (mask_pos.sum() + 1e-6)
+        neg_pairs_mean = (mask_neg * dot_prod).sum() / (mask_neg.sum() + 1e-6)  # TODO: removed abs
 
-        loss_opl = (1 - s) + self.gamma * d.abs()
-        
-        return loss_opl
+        loss = (1.0 - pos_pairs_mean) + self.gamma * neg_pairs_mean
+
+        return loss
