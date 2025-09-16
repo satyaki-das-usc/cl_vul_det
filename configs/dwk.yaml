@@ -124,7 +124,7 @@ classifier:
   n_classes: 2
   drop_out: 0.5
 hyper_parameters:
-  use_imbalanced_sampler: false
+  use_imbalanced_sampler: true
   lambdas:
     classification: 1.0
     projection: 1.0
