@@ -269,7 +269,10 @@ if __name__ == "__main__":
             with open(slice_path, "rb") as rbfi:
                 slice_graph: nx.DiGraph = pickle.load(rbfi)
                 ys.append(slice_graph.graph["label"])
-        sampler = ImbalancedSampler(torch.tensor(ys, dtype=torch.long), num_samples=ys.count(0)*2)
+        neg_cnt = ys.count(0)
+        pos_cnt = len(ys) - neg_cnt
+        majority_cnt = max(neg_cnt, pos_cnt)
+        sampler = ImbalancedSampler(torch.tensor(ys, dtype=torch.long), num_samples=majority_cnt*2)
     data_module = SliceDataModule(config, vocab, train_sampler=sampler, use_temp_data=args.use_temp_data)
     logging.info("Data module loading completed.")
 
