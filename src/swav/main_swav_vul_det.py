@@ -27,7 +27,7 @@ from src.vocabulary import Vocabulary
 from src.torch_data.datasets import SliceDataset
 from src.torch_data.datamodules import SliceDataModule
 from src.models.swav_vd import GraphSwAVVD
-from src.models.modules.losses import SupConLoss, InfoNCEContrastiveLoss, OrthogonalProjectionLoss
+from src.models.modules.losses import SupConLoss, InfoNCE, OrthogonalProjectionLoss
 from src.swav.assignment_protocols import sinkhorn, uot_sinkhorn_gpu
 from src.swav.graph_augmentations import generate_SF_augmentations
 
@@ -47,7 +47,7 @@ contrast_losses = []
 contrastive_options = {
     "supcon": SupConLoss,
     "simclr": SupConLoss,
-    "info_nce": InfoNCEContrastiveLoss
+    "info_nce": InfoNCE
 }
 
 assignment_functions = {
@@ -125,13 +125,12 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         swav_loss /= len(config.swav.views_for_assign)
         epoch_swav_losses.append(swav_loss.item())
 
-        h1, h2 = F.normalize(graph_encodings[0], dim=-1), F.normalize(graph_encodings[1], dim=-1)
         if config.swav.contrastive.criterion == "info_nce":
-            contrastive_loss = contrastive_criterion(h1, h2)
+            contrastive_loss = (contrastive_criterion(anchor_graph_encodings, graph_encodings[0]) + contrastive_criterion(anchor_graph_encodings, graph_encodings[1])) / 2.0
         elif config.swav.contrastive.criterion == "supcon":
-            contrastive_loss = contrastive_criterion(torch.stack([F.normalize(anchor_graph_encodings, dim=-1), h1, h2], dim=1), labels=labels)
+            contrastive_loss = contrastive_criterion(torch.stack([anchor_graph_encodings, graph_encodings[0], graph_encodings[1]], dim=1), labels=labels)
         elif config.swav.contrastive.criterion == "simclr":
-            contrastive_loss = contrastive_criterion(torch.stack([F.normalize(anchor_graph_encodings, dim=-1), h1, h2], dim=1))
+            contrastive_loss = contrastive_criterion(torch.stack([anchor_graph_encodings, graph_encodings[0], graph_encodings[1]], dim=1))
         epoch_contrast_losses.append(contrastive_loss.item())
 
         progress_bar.set_postfix({
