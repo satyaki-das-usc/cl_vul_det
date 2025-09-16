@@ -19,6 +19,7 @@ omegaconf
 tqdm
 networkx
 pandas
+fastparquet
 imbalanced-learn
 scikit-learn
 commode-utils
