@@ -256,21 +256,20 @@ if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     logging.info("Loading data module...")
-    train_slices_filepath = join(dataset_root, config.train_slices_filename)
-    logging.info(f"Loading training slice paths list from {train_slices_filepath}...")
-    with open(train_slices_filepath, "r") as rfi:
-        train_slices = json.load(rfi)
-    logging.info(f"Completed. Loaded {len(train_slices)} slices.")
-    ys = []
-    for slice_path in tqdm(train_slices, desc=f"Slice files"):
-        with open(slice_path, "rb") as rbfi:
-            slice_graph: nx.DiGraph = pickle.load(rbfi)
-            ys.append(slice_graph.graph["label"])
     sampler = None
     if config.hyper_parameters.use_imbalanced_sampler:
-        sampler = ImbalancedSampler(torch.tensor(ys, dtype=torch.long))
         logging.info("Using Imbalanced Sampler for training data loader.")
-    # sampler = ImbalancedSampler(torch.tensor(ys, dtype=torch.long))
+        train_slices_filepath = join(dataset_root, config.train_slices_filename)
+        logging.info(f"Loading training slice paths list from {train_slices_filepath}...")
+        with open(train_slices_filepath, "r") as rfi:
+            train_slices = json.load(rfi)
+        logging.info(f"Completed. Loaded {len(train_slices)} slices.")
+        ys = []
+        for slice_path in tqdm(train_slices, desc=f"Slice files"):
+            with open(slice_path, "rb") as rbfi:
+                slice_graph: nx.DiGraph = pickle.load(rbfi)
+                ys.append(slice_graph.graph["label"])
+        sampler = ImbalancedSampler(torch.tensor(ys, dtype=torch.long))
     data_module = SliceDataModule(config, vocab, train_sampler=sampler, use_temp_data=args.use_temp_data)
     logging.info("Data module loading completed.")
 
@@ -313,7 +312,8 @@ if __name__ == "__main__":
     do_swav = "NoSwAV" if config.hyper_parameters.lambdas.swav == 0.0 else "DoSwAV"
     gnn_attention_only = "GNNAttentionOnly" if config.gnn.attention_only else "GNNWithPooling"
     use_edge_attr = "WithEdgeAttr" if config.gnn.use_edge_attr else "NoEdgeAttr"
-    checkpoint_dir = join(config.model_save_dir, "graph_swav_classification", dataset_name, gnn_name, nn_text, cl_warmup_text, do_swav, contrastive_text, gnn_attention_only, use_edge_attr)
+    use_imbalanced_sampler = "WithImbalancedSampler" if config.hyper_parameters.use_imbalanced_sampler else "NoImbalancedSampler"
+    checkpoint_dir = join(config.model_save_dir, "graph_swav_classification", dataset_name, gnn_name, nn_text, cl_warmup_text, do_swav, contrastive_text, gnn_attention_only, use_edge_attr, use_imbalanced_sampler)
     if not exists(checkpoint_dir):
         os.makedirs(checkpoint_dir, exist_ok=True)
     model_name = model.__class__.__name__
