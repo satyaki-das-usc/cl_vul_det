@@ -255,31 +255,15 @@ if __name__ == "__main__":
     pad_idx = vocab.get_pad_id()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    logging.info("Loading data module...")
-    sampler = None
-    if config.hyper_parameters.use_imbalanced_sampler:
-        logging.info("Using Imbalanced Sampler for training data loader.")
-        train_slices_filepath = join(dataset_root, config.train_slices_filename)
-        logging.info(f"Loading training slice paths list from {train_slices_filepath}...")
-        with open(train_slices_filepath, "r") as rfi:
-            train_slices = json.load(rfi)
-        logging.info(f"Completed. Loaded {len(train_slices)} slices.")
-        ys = []
-        for slice_path in tqdm(train_slices, desc=f"Slice files"):
-            with open(slice_path, "rb") as rbfi:
-                slice_graph: nx.DiGraph = pickle.load(rbfi)
-                ys.append(slice_graph.graph["label"])
-        neg_cnt = ys.count(0)
-        pos_cnt = len(ys) - neg_cnt
-        majority_cnt = max(neg_cnt, pos_cnt)
-        sampler = ImbalancedSampler(torch.tensor(ys, dtype=torch.long), num_samples=majority_cnt*2)
-    data_module = SliceDataModule(config, vocab, train_sampler=sampler, use_temp_data=args.use_temp_data)
-    logging.info("Data module loading completed.")
-
     logging.info("Building model...")
     model = GraphSwAVVD(config, vocab, vocab_size, pad_idx).to(device)
     logging.info("Model building completed.")
-    train_loader = data_module.train_dataloader()
+
+    train_slices_filepath = join(dataset_root, config.train_slices_filename)
+    logging.info(f"Loading training slice paths list from {train_slices_filepath}...")
+    with open(train_slices_filepath, "r") as rfi:
+        train_slices = json.load(rfi)
+    logging.info(f"Completed. Loaded {len(train_slices)} slices.")
 
     # optimizer = torch.optim.AdamW([{
     #             "params": p
@@ -292,10 +276,11 @@ if __name__ == "__main__":
         momentum=0.9,
         weight_decay=config.swav.wd
     )
-    warmup_lr_schedule = np.linspace(config.swav.start_warmup, config.swav.base_lr, len(train_loader) * config.swav.warmup_epochs)
-    iters = np.arange(len(train_loader) * (config.hyper_parameters.n_epochs - config.swav.warmup_epochs))
+    train_loader_lens = [math.ceil(len(train_slices) / batch_size) for batch_size in config.hyper_parameters.batch_sizes]
+    warmup_lr_schedule = np.linspace(config.swav.start_warmup, config.swav.base_lr, sum([train_loader_lens[i // 10] for i in range(config.swav.warmup_epochs)]))
+    iters = np.arange(sum([train_loader_lens[i // 10] for i in range(config.swav.warmup_epochs, config.hyper_parameters.n_epochs)]))
     cosine_lr_schedule = np.array([config.swav.final_lr + 0.5 * (config.swav.base_lr - config.swav.final_lr) * (1 + \
-                         math.cos(math.pi * t / (len(train_loader) * (config.hyper_parameters.n_epochs - config.swav.warmup_epochs)))) for t in iters])
+                            math.cos(math.pi * t / (sum([train_loader_lens[i // 10] for i in range(config.swav.warmup_epochs, config.hyper_parameters.n_epochs)])))) for t in iters])
     lr_schedule = np.concatenate((warmup_lr_schedule, cosine_lr_schedule))
 
     contrastive_criterion = contrastive_options[config.swav.contrastive.criterion](temperature=config.swav.contrastive.temperature)
@@ -325,6 +310,22 @@ if __name__ == "__main__":
     
     best_val_f1 = 0.0
     for epoch in range(config.hyper_parameters.n_epochs):
+        logging.info("Loading data module...")
+        sampler = None
+        if config.hyper_parameters.use_imbalanced_sampler:
+            logging.info("Using Imbalanced Sampler for training data loader.")
+            ys = []
+            for slice_path in tqdm(train_slices, desc=f"Slice files"):
+                with open(slice_path, "rb") as rbfi:
+                    slice_graph: nx.DiGraph = pickle.load(rbfi)
+                    ys.append(slice_graph.graph["label"])
+            neg_cnt = ys.count(0)
+            pos_cnt = len(ys) - neg_cnt
+            majority_cnt = max(neg_cnt, pos_cnt)
+            sampler = ImbalancedSampler(torch.tensor(ys, dtype=torch.long), num_samples=majority_cnt*2)
+        data_module = SliceDataModule(config, vocab, config.hyper_parameters.batch_sizes[epoch // 10], train_sampler=sampler, use_temp_data=args.use_temp_data)
+        train_loader = data_module.train_dataloader()
+        logging.info("Data module loading completed.")
         train(train_loader, model, optimizer, epoch, lr_schedule)
         eval_stats = eval(model, data_module.val_dataloader())
         if eval_stats["f1"] <= best_val_f1:

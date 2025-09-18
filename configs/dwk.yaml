@@ -135,7 +135,17 @@ hyper_parameters:
   vector_length: 128
   n_epochs: 100
   patience: 10
-  batch_size: 128
+  batch_sizes:
+    - 16
+    - 32
+    - 64
+    - 128
+    - 128
+    - 128
+    - 128
+    - 128
+    - 128
+    - 128
   test_batch_size: 128
   reload_dataloader: true
   clip_norm: 5

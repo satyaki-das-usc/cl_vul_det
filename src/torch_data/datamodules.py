@@ -14,11 +14,12 @@ from src.torch_data.datasets import SliceDataset
 from src.torch_data.samples import SliceGraphSample, SliceGraphBatch
 
 class SliceDataModule(LightningDataModule):
-    def __init__(self, config: DictConfig, vocab: Vocabulary, train_sampler=None, use_temp_data: bool = False):
+    def __init__(self, config: DictConfig, vocab: Vocabulary, train_batch_size, train_sampler=None, use_temp_data: bool = False):
         super().__init__()
         self.__vocab = vocab
         self.__config = config
         self.__train_sampler = train_sampler
+        self.__train_batch_size = train_batch_size
 
         if self.__config.num_workers != -1:
             self.__n_workers = min(self.__config.num_workers, cpu_count())
@@ -43,7 +44,7 @@ class SliceDataModule(LightningDataModule):
         if self.__train_sampler:
             return DataLoader(
                 train_dataset,
-                batch_size=self.__config.hyper_parameters.batch_size,
+                batch_size=self.__train_batch_size,
                 sampler=self.__train_sampler,
                 num_workers=self.__n_workers,
                 collate_fn=self.collate_wrapper,
@@ -51,7 +52,7 @@ class SliceDataModule(LightningDataModule):
             )
         return DataLoader(
             train_dataset,
-            batch_size=self.__config.hyper_parameters.batch_size,
+            batch_size=self.__train_batch_size,
             shuffle=True,
             num_workers=self.__n_workers,
             collate_fn=self.collate_wrapper,
