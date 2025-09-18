@@ -86,7 +86,7 @@ class SliceTokenizer:
         if node_sym_code.startswith("for"):
             init, condition, step = node_sym_code.partition("(")[-1].rpartition(")")[0].split(";")
             if len(init.strip()) > 0:
-                print(f"NotImplementedError: Non-empty \"for loop\" initialization")
+                print(f"Non-empty \"for loop\" initialization: {init}. Skipping.")
                 return
             
             new_node = f"{start}_step"
@@ -153,7 +153,11 @@ class SliceTokenizer:
             
             return
         elif is_partial_for_loop(node_sym_code):
-            condition, step = node_sym_code.strip("(").rpartition(")")[0].split(";")
+            condition_parts = node_sym_code.strip("(").rpartition(")")[0].split(";")
+            if len(condition_parts) < 2:
+                print(f"For loop with less than 2 parts: {node_sym_code}. Skipping.")
+                return
+            condition, step = condition_parts[0], condition_parts[1]
             new_node = f"{start}_step"
             self.slice_graph.nodes[start]["sym_code"] = condition
             self.slice_graph.nodes[start]["code_sym_token"] = self.custom_tokenize_code_line(condition, False)
@@ -172,7 +176,7 @@ class SliceTokenizer:
             self.slice_graph.remove_edges_from(edges_to_remove)
             self.slice_graph.add_edges_from(new_edges)
         else:
-            print(f"NotImplementedError: Unknown \"self control edge\" type: {node_sym_code}")
+            print(f"Unknown \"self control edge\" type: {node_sym_code}. Skipping.")
             return
     
     def tokenize_slice(self):
