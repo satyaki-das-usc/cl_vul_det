@@ -74,7 +74,7 @@ class RNNLayer(torch.nn.Module):
             sorted_path_lengths, sort_indices = torch.sort(first_pad_pos,
                                                            descending=True)
             _, reverse_sort_indices = torch.sort(sort_indices)
-            sorted_path_lengths = sorted_path_lengths.to(torch.device("cpu"))
+            sorted_path_lengths = torch.clamp_min(sorted_path_lengths, 1).to(torch.device("cpu"))
         subtokens_embed = subtokens_embed[sort_indices]
         packed_embeddings = nn.utils.rnn.pack_padded_sequence(
             subtokens_embed, sorted_path_lengths, batch_first=True)
