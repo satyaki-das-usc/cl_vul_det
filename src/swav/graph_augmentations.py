@@ -1,5 +1,6 @@
 import torch
 import pickle
+import random
 import networkx as nx
 import wordninja as wn
 
@@ -210,7 +211,9 @@ def generate_edge_set_augmentation(slice_graph: nx.DiGraph, vocab: Vocabulary, m
     augmented_graph.add_node(stmt_node)
     augmented_graph.nodes[stmt_node]["sym_code"] = global_augmentation2[1]
     augmented_graph.nodes[stmt_node]["code_sym_token"] = tokenize_code_line(global_augmentation2[1], subtoken=False)
-    new_edges = [(cond_node, n, {"label": "CONTROLS", "direction": "forward"}) for n in augmented_graph.nodes if n != cond_node]
+    all_nodes = list(augmented_graph.nodes())
+    controlled_nodes = [stmt_node] + random.sample(all_nodes, random.randint(0, len(all_nodes)))
+    new_edges = [(cond_node, n, {"label": "CONTROLS", "direction": "forward"}) for n in controlled_nodes if n not in [cond_node, stmt_node]]
     augmented_graph.add_edges_from(new_edges)
     augmented_graph = SliceGraph(slice_graph=augmented_graph)
     augmented_graph = SliceGraphSample(graph=augmented_graph.to_torch_graph(vocab, max_len),
