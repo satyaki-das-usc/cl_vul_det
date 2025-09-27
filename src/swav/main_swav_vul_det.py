@@ -309,24 +309,25 @@ if __name__ == "__main__":
     logging.info(f"Checkpoint directory: {checkpoint_dir}")
     
     best_val_f1 = 0.0
+    logging.info("Loading data module...")
+    sampler = None
+    if config.hyper_parameters.use_imbalanced_sampler:
+        logging.info("Using Imbalanced Sampler for training data loader.")
+        ys = []
+        for slice_path in tqdm(train_slices, desc=f"Slice files"):
+            with open(slice_path, "rb") as rbfi:
+                slice_graph: nx.DiGraph = pickle.load(rbfi)
+                ys.append(slice_graph.graph["label"])
+        neg_cnt = ys.count(0)
+        pos_cnt = len(ys) - neg_cnt
+        majority_cnt = max(neg_cnt, pos_cnt)
+        sampler = ImbalancedSampler(torch.tensor(ys, dtype=torch.long), num_samples=majority_cnt*2)
+    data_module = SliceDataModule(config, vocab, config.hyper_parameters.batch_sizes[0], train_sampler=sampler, use_temp_data=args.use_temp_data)
+    logging.info("Data module loading completed.")
     for epoch in range(config.hyper_parameters.n_epochs):
-        logging.info("Loading data module...")
-        sampler = None
-        if config.hyper_parameters.use_imbalanced_sampler:
-            logging.info("Using Imbalanced Sampler for training data loader.")
-            ys = []
-            for slice_path in tqdm(train_slices, desc=f"Slice files"):
-                with open(slice_path, "rb") as rbfi:
-                    slice_graph: nx.DiGraph = pickle.load(rbfi)
-                    ys.append(slice_graph.graph["label"])
-            neg_cnt = ys.count(0)
-            pos_cnt = len(ys) - neg_cnt
-            majority_cnt = max(neg_cnt, pos_cnt)
-            sampler = ImbalancedSampler(torch.tensor(ys, dtype=torch.long), num_samples=majority_cnt*2)
-        data_module = SliceDataModule(config, vocab, config.hyper_parameters.batch_sizes[epoch // 10], train_sampler=sampler, use_temp_data=args.use_temp_data)
         train_loader = data_module.train_dataloader()
-        logging.info("Data module loading completed.")
         train(train_loader, model, optimizer, epoch, lr_schedule)
+        data_module.set_train_batch_size(config.hyper_parameters.batch_sizes[(epoch + 1) // 10])
         eval_stats = eval(model, data_module.val_dataloader())
         if eval_stats["f1"] <= best_val_f1:
             continue

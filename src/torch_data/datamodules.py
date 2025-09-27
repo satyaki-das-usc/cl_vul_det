@@ -20,6 +20,7 @@ class SliceDataModule(LightningDataModule):
         self.__config = config
         self.__train_sampler = train_sampler
         self.__train_batch_size = train_batch_size
+        self.__train_dataset = None
 
         if self.__config.num_workers != -1:
             self.__n_workers = min(self.__config.num_workers, cpu_count())
@@ -37,13 +38,17 @@ class SliceDataModule(LightningDataModule):
     def __create_dataset(self, data_path: str) -> Dataset:
         return SliceDataset(data_path, self.__config, self.__vocab)
     
+    def set_train_batch_size(self, batch_size: int):
+        self.__train_batch_size = batch_size
+
     def train_dataloader(self) -> DataLoader:
         train_dataset_path = join(self.__dataset_root, self.__config.train_slices_filename)
-        train_dataset = self.__create_dataset(train_dataset_path)
-        
+        if self.__train_dataset is None:
+            self.__train_dataset = self.__create_dataset(train_dataset_path)
+
         if self.__train_sampler:
             return DataLoader(
-                train_dataset,
+                self.__train_dataset,
                 batch_size=self.__train_batch_size,
                 sampler=self.__train_sampler,
                 num_workers=self.__n_workers,
@@ -51,7 +56,7 @@ class SliceDataModule(LightningDataModule):
                 pin_memory=True,
             )
         return DataLoader(
-            train_dataset,
+            self.__train_dataset,
             batch_size=self.__train_batch_size,
             shuffle=True,
             num_workers=self.__n_workers,
