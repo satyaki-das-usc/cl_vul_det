@@ -64,7 +64,7 @@ class SliceDataModule(LightningDataModule):
         val_dataset = self.__create_dataset(val_dataset_path)
         return DataLoader(
             val_dataset,
-            batch_size=self.__config.hyper_parameters.batch_size,
+            batch_size=self.__config.hyper_parameters.test_batch_size,
             shuffle=False,
             num_workers=self.__n_workers,
             collate_fn=self.collate_wrapper,
@@ -76,7 +76,7 @@ class SliceDataModule(LightningDataModule):
         test_dataset = self.__create_dataset(test_dataset_path)
         return DataLoader(
             test_dataset,
-            batch_size=self.__config.hyper_parameters.batch_size,
+            batch_size=self.__config.hyper_parameters.test_batch_size,
             shuffle=False,
             num_workers=self.__n_workers,
             collate_fn=self.collate_wrapper,
