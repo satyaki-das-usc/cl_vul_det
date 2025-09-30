@@ -211,9 +211,30 @@ def generate_edge_set_augmentation(slice_graph: nx.DiGraph, vocab: Vocabulary, m
     augmented_graph.add_node(stmt_node)
     augmented_graph.nodes[stmt_node]["sym_code"] = global_augmentation2[1]
     augmented_graph.nodes[stmt_node]["code_sym_token"] = tokenize_code_line(global_augmentation2[1], subtoken=False)
-    all_nodes = list(augmented_graph.nodes())
-    controlled_nodes = [stmt_node] + random.sample(all_nodes, random.randint(0, len(all_nodes)))
-    new_edges = [(cond_node, n, {"label": "CONTROLS", "direction": "forward"}) for n in controlled_nodes if n not in [cond_node, stmt_node]]
+    all_nodes = list(slice_graph.nodes())
+    controlled_nodes = set()
+    controlled_nodes.add(stmt_node)
+    insert_point = None
+    if random.choice([True, False]) and len(all_nodes) > 0:
+        insert_point = random.choice(all_nodes)
+    if insert_point is not None:
+        forward_queue = []
+        visited = set()
+        forward_queue.append(insert_point)
+        visited.add(insert_point)
+
+        while len(forward_queue) > 0:
+            current_line = forward_queue.pop(0)
+            controlled_nodes.add(current_line)
+            if current_line not in slice_graph._succ:
+                continue
+            for succ in slice_graph._succ[current_line]:
+                if succ in visited:
+                    continue
+                visited.add(succ)
+                forward_queue.append(succ)
+
+    new_edges = [(cond_node, n, {"label": "CONTROLS", "direction": "forward"}) for n in controlled_nodes]
     augmented_graph.add_edges_from(new_edges)
     augmented_graph = SliceGraph(slice_graph=augmented_graph)
     augmented_graph = SliceGraphSample(graph=augmented_graph.to_torch_graph(vocab, max_len),
