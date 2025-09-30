@@ -323,11 +323,11 @@ if __name__ == "__main__":
         majority_cnt = max(neg_cnt, pos_cnt)
         sampler = ImbalancedSampler(torch.tensor(ys, dtype=torch.long), num_samples=majority_cnt*2)
     data_module = SliceDataModule(config, vocab, config.hyper_parameters.batch_sizes[0], train_sampler=sampler, use_temp_data=args.use_temp_data)
+    train_loader = data_module.train_dataloader()
     logging.info("Data module loading completed.")
     for epoch in range(config.hyper_parameters.n_epochs):
-        train_loader = data_module.train_dataloader()
         train(train_loader, model, optimizer, epoch, lr_schedule)
-        data_module.set_train_batch_size(config.hyper_parameters.batch_sizes[(epoch + 1) // 10])
+        # data_module.set_train_batch_size(config.hyper_parameters.batch_sizes[(epoch + 1) // 10])
         eval_stats = eval(model, data_module.val_dataloader())
         if eval_stats["f1"] <= best_val_f1:
             continue
