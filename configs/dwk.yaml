@@ -45,7 +45,7 @@ log_every_epoch: 10
 progress_bar_refresh_rate: 1
 exclude_NNs: false
 dataset:
-  name: BigVul
+  name: Devign
   token:
     max_parts: 16
     is_wrapped: false
@@ -78,7 +78,7 @@ swav:
     lambda_h: 1.0
     alpha: 0.25
     omega: 0.25
-    criterion: simclr
+    criterion: info_nce
   margin: 0.5
   alpha: 0.25
   omega: 0.25

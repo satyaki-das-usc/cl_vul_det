@@ -304,7 +304,7 @@ def build_CPG(code_path: str,
     # CPG.add_edges_from(post_dom_edges)
     # CPG.add_edges_from(def_use_edges)
 
-    CPG = remove_static_control_dependency(remove_dependency_free_node(CPG), nodes)
+    # CPG = remove_static_control_dependency(remove_dependency_free_node(CPG), nodes)
 
     # CPG.remove_edges_from(def_use_edges)
     
