@@ -388,6 +388,17 @@ def process_dataset(dataset_root: str, config: DictConfig, only_clear_slices: bo
         with open(cpp_paths_filepath, "r") as rfi:
             cpp_paths = json.load(rfi)
         logging.info(f"Completed. Retrieved {len(cpp_paths)} cpp filepaths.")
+
+    ignore_list = []
+    ignore_list_filepath = join(dataset_root, config.ignore_list_filename)
+    if exists(ignore_list_filepath):
+        logging.info(f"Reading ignore list from {ignore_list_filepath}...")
+        with open(ignore_list_filepath, "r") as rfi:
+            ignore_list = json.load(rfi)
+        logging.info(f"Completed. Retrieved {len(ignore_list)} entries from ignore list.")
+    else:
+        logging.info(f"{ignore_list_filepath} not found. No files will be ignored.")
+    cpp_paths = set(cpp_paths) - set(ignore_list)
     
     unperturbed_files_filepath = join(dataset_root, config.unperturbed_files_filename)
     if not exists(unperturbed_files_filepath):
