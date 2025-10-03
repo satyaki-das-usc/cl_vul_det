@@ -305,10 +305,18 @@ if __name__ == "__main__":
     if not exists(checkpoint_dir):
         os.makedirs(checkpoint_dir, exist_ok=True)
     model_name = model.__class__.__name__
-    checkpoint_path = join(checkpoint_dir, f"{model_name}.ckpt")
+    best_f1_directory = join(checkpoint_dir, "best_f1")
+    if not exists(best_f1_directory):
+        os.makedirs(best_f1_directory, exist_ok=True)
+    best_f1_checkpoint_path = join(best_f1_directory, f"{model_name}.ckpt")
+    best_loss_directory = join(checkpoint_dir, "best_loss")
+    if not exists(best_loss_directory):
+        os.makedirs(best_loss_directory, exist_ok=True)
+    best_loss_checkpoint_path = join(best_loss_directory, f"{model_name}.ckpt")
     logging.info(f"Checkpoint directory: {checkpoint_dir}")
     
     best_val_f1 = 0.0
+    best_val_loss = float('inf')
     logging.info("Loading data module...")
     sampler = None
     if config.hyper_parameters.use_imbalanced_sampler:
@@ -329,11 +337,14 @@ if __name__ == "__main__":
         train(train_loader, model, optimizer, epoch, lr_schedule)
         data_module.set_train_batch_size(config.hyper_parameters.batch_sizes[(epoch + 1) // 10])
         eval_stats = eval(model, data_module.val_dataloader())
-        if eval_stats["f1"] <= best_val_f1:
-            continue
-        best_val_f1 = eval_stats["f1"]
-        torch.save(model.state_dict(), checkpoint_path)
-        logging.info(f"New best model saved with F1: {best_val_f1:.4f}")
+        if eval_stats["f1"] > best_val_f1:
+            best_val_f1 = eval_stats["f1"]
+            torch.save(model.state_dict(), best_f1_checkpoint_path)
+            logging.info(f"New best model saved with F1: {best_val_f1:.4f}")
+        if eval_stats["eval_loss"] < best_val_loss:
+            best_val_loss = eval_stats["eval_loss"]
+            torch.save(model.state_dict(), best_loss_checkpoint_path)
+            logging.info(f"New best model saved with Loss: {best_val_loss:.4f}")
 
     plt.plot(ce_losses, label='Cross-Entropy Loss')
     plt.plot(proj_losses, label='Projection Loss')
@@ -357,11 +368,19 @@ if __name__ == "__main__":
         json.dump(test_stats, wfi, indent=4)
     
     logging.info("Testing model with best validation F1...")
-    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+    model.load_state_dict(torch.load(best_f1_checkpoint_path, map_location=device))
     test_stats = test(model, data_module.test_dataloader())
     logging.info(f"Test Stats: {test_stats}")
     logging.info("Testing completed.")
     with open(join(checkpoint_dir, "test_statistics_best_val_f1.json"), "w") as wfi:
+        json.dump(test_stats, wfi, indent=4)
+    
+    logging.info("Testing model with best validation loss...")
+    model.load_state_dict(torch.load(best_loss_checkpoint_path, map_location=device))
+    test_stats = test(model, data_module.test_dataloader())
+    logging.info(f"Test Stats: {test_stats}")
+    logging.info("Testing completed.")
+    with open(join(checkpoint_dir, "test_statistics_best_val_loss.json"), "w") as wfi:
         json.dump(test_stats, wfi, indent=4)
     
     logging.info(f"Completed.")
