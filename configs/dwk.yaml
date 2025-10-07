@@ -45,7 +45,7 @@ log_every_epoch: 10
 progress_bar_refresh_rate: 1
 exclude_NNs: false
 dataset:
-  name: Devign
+  name: BigVul
   token:
     max_parts: 16
     is_wrapped: false
