@@ -293,6 +293,8 @@ if __name__ == "__main__":
     contrast_losses = []
 
     dataset_name = basename(config.dataset.name)
+    if dataset_name == "BigVul":
+        dataset_name = join(dataset_name, config.dataset.version)
     gnn_name = gnn_name_map[config.gnn.name]
     nn_text = "ExcludeNN" if config.exclude_NNs else "IncludeNN"
     cl_warmup_text = "CLWarmup" if config.hyper_parameters.contrastive_warmup_epochs > 0 else "NoCLWarmup"
