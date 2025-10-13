@@ -39,6 +39,10 @@ class SliceGraph:
     def label(self) -> int:
         return self.__label
     
+    @property
+    def slice_graph(self) -> nx.DiGraph:
+        return self.__slice_graph
+
     def to_torch_graph(self, vocab: Vocabulary, max_len: int):
         node_ids = torch.full((len(self.tokens_list), max_len),
                                     vocab.get_pad_id(),

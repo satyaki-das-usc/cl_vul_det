@@ -109,8 +109,8 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         regularization_loss = torch.norm(anchor_graph_encodings, dim=-1).mean() + torch.norm(activations, dim=-1).mean()
         epoch_reg_losses.append(regularization_loss.item())
         
-        inputs = generate_SF_augmentations(batched_graph, vocab, config.dataset.token.max_parts)
-        _, _, graph_encodings, _, output = zip(*(model(inp.graphs.to(device)) for inp in inputs))
+        inputs = batched_graph.augmented_views
+        _, _, graph_encodings, _, output = zip(*(model(inp.to(device)) for inp in inputs))
 
         swav_loss = 0
         for view_id in config.swav.views_for_assign:
