@@ -4,10 +4,11 @@ import json
 import networkx as nx
 
 from os.path import exists
+from omegaconf import DictConfig
+from copy import deepcopy
 
 from torch.utils.data import Dataset
 
-from omegaconf import DictConfig
 
 from src.vocabulary import Vocabulary
 from src.torch_data.graphs import SliceGraph
@@ -15,8 +16,8 @@ from src.torch_data.samples import SliceGraphSample
 from src.swav.graph_augmentations import generate_node_set_augmentation, generate_edge_set_augmentation
 
 def generate_SF_augmentations_per_sample(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int):
-    glob1_view = generate_node_set_augmentation(slice_graph, vocab, max_len)
-    glob2_view = generate_edge_set_augmentation(slice_graph, vocab, max_len)
+    glob1_view = generate_node_set_augmentation(slice_graph, vocab, max_len).to_torch_graph(vocab, max_len)
+    glob2_view = generate_edge_set_augmentation(slice_graph, vocab, max_len).to_torch_graph(vocab, max_len)
 
     control_edges = []
     dd_edges = []
@@ -31,7 +32,7 @@ def generate_SF_augmentations_per_sample(slice_graph: nx.DiGraph, vocab: Vocabul
         #     post_dom_edges.append((u, v, edge_data))
 
     # if len(control_edges) > 0:
-    control_edge_view = slice_graph.copy()
+    control_edge_view = deepcopy(slice_graph)
     control_edge_view.remove_edges_from(dd_edges + post_dom_edges)
     isolated = [n for n in control_edge_view.nodes() if control_edge_view.degree(n) == 0]
     if control_edge_view.number_of_nodes() > len(isolated):
@@ -39,7 +40,7 @@ def generate_SF_augmentations_per_sample(slice_graph: nx.DiGraph, vocab: Vocabul
     control_edge_view = SliceGraph(slice_graph=control_edge_view).to_torch_graph(vocab, max_len)
     
     # if len(dd_edges) > 0:
-    dd_edge_view = slice_graph.copy()
+    dd_edge_view = deepcopy(slice_graph)
     dd_edge_view.remove_edges_from(control_edges + post_dom_edges)
     isolated = [n for n in dd_edge_view.nodes() if dd_edge_view.degree(n) == 0]
     if dd_edge_view.number_of_nodes() > len(isolated):
@@ -47,11 +48,11 @@ def generate_SF_augmentations_per_sample(slice_graph: nx.DiGraph, vocab: Vocabul
     dd_edge_view = SliceGraph(slice_graph=dd_edge_view).to_torch_graph(vocab, max_len)
     
     # if len(post_dom_edges) > 0:
-    post_dom_edge_view = slice_graph.copy()
-    post_dom_edge_view.remove_edges_from(control_edges + dd_edges)
-    isolated = [n for n in post_dom_edge_view.nodes() if post_dom_edge_view.degree(n) == 0]
-    post_dom_edge_view.remove_nodes_from(isolated)
-    post_dom_edge_view = SliceGraph(slice_graph=post_dom_edge_view).to_torch_graph(vocab, max_len)
+    # post_dom_edge_view = deepcopy(slice_graph)
+    # post_dom_edge_view.remove_edges_from(control_edges + dd_edges)
+    # isolated = [n for n in post_dom_edge_view.nodes() if post_dom_edge_view.degree(n) == 0]
+    # post_dom_edge_view.remove_nodes_from(isolated)
+    # post_dom_edge_view = SliceGraph(slice_graph=post_dom_edge_view).to_torch_graph(vocab, max_len)
 
     return [glob1_view, glob2_view, control_edge_view, dd_edge_view]
 

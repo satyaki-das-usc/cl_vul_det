@@ -5,6 +5,7 @@ import networkx as nx
 import wordninja as wn
 
 from typing import List
+from copy import deepcopy
 
 from torch_geometric.data import Batch, Data
 from torch_geometric.utils import dropout_node, dropout_edge, k_hop_subgraph
@@ -189,7 +190,7 @@ def get_slice_graph(slice_path: str) -> nx.DiGraph:
 
 def generate_node_set_augmentation(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int) -> SliceGraphSample:
     # Create a copy of the original graph
-    augmented_graph = slice_graph.copy()
+    augmented_graph = deepcopy(slice_graph)
     aug_node = f"glob_aug"
     augmented_graph.add_node(aug_node)
     augmented_graph.nodes[aug_node]["sym_code"] = global_augmentation1
@@ -204,7 +205,7 @@ def generate_node_set_augmentation(slice_graph: nx.DiGraph, vocab: Vocabulary, m
 
 def generate_edge_set_augmentation(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int) -> SliceGraphSample:
     # Create a copy of the original graph
-    augmented_graph = slice_graph.copy()
+    augmented_graph = deepcopy(slice_graph)
     cond_node = f"cond_aug"
     augmented_graph.add_node(cond_node)
     augmented_graph.nodes[cond_node]["sym_code"] = global_augmentation2[0]
@@ -273,7 +274,7 @@ def generate_SF_augmentations(batched_graph: SliceGraphBatch, vocab: Vocabulary,
             #     post_dom_edges.append((u, v, edge_data))
 
         # if len(control_edges) > 0:
-        control_edge_view = slice_graph.copy()
+        control_edge_view = deepcopy(slice_graph)
         control_edge_view.remove_edges_from(dd_edges + post_dom_edges)
         isolated = [n for n in control_edge_view.nodes() if control_edge_view.degree(n) == 0]
         if control_edge_view.number_of_nodes() > len(isolated):
@@ -284,7 +285,7 @@ def generate_SF_augmentations(batched_graph: SliceGraphBatch, vocab: Vocabulary,
         control_edges_views.append(control_edge_view)
         
         # if len(dd_edges) > 0:
-        dd_edge_view = slice_graph.copy()
+        dd_edge_view = deepcopy(slice_graph)
         dd_edge_view.remove_edges_from(control_edges + post_dom_edges)
         isolated = [n for n in dd_edge_view.nodes() if dd_edge_view.degree(n) == 0]
         if dd_edge_view.number_of_nodes() > len(isolated):
@@ -295,7 +296,7 @@ def generate_SF_augmentations(batched_graph: SliceGraphBatch, vocab: Vocabulary,
         dd_edges_views.append(dd_edge_view)
         
         # if len(post_dom_edges) > 0:
-        post_dom_edge_view = slice_graph.copy()
+        post_dom_edge_view = deepcopy(slice_graph)
         post_dom_edge_view.remove_edges_from(control_edges + dd_edges)
         isolated = [n for n in post_dom_edge_view.nodes() if post_dom_edge_view.degree(n) == 0]
         post_dom_edge_view.remove_nodes_from(isolated)
