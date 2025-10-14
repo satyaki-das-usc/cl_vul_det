@@ -278,10 +278,10 @@ if __name__ == "__main__":
     model = GraphSwAVVD(config, vocab, vocab_size, pad_idx).to(device)
     logging.info("Model building completed.")
 
-    if config.dataset.name == "BigVul":
-        train_slices_filepath = join(dataset_root, f"{config.dataset.version}_{config.train_slices_filename}")
-    else:
-        train_slices_filepath = join(dataset_root, config.train_slices_filename)
+    # if config.dataset.name == "BigVul":
+    #     train_slices_filepath = join(dataset_root, f"{config.dataset.version}_{config.train_slices_filename}")
+    # else:
+    train_slices_filepath = join(dataset_root, config.train_slices_filename)
     logging.info(f"Loading training slice paths list from {train_slices_filepath}...")
     with open(train_slices_filepath, "r") as rfi:
         train_slices = json.load(rfi)
