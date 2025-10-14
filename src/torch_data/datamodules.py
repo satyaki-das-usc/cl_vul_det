@@ -21,6 +21,8 @@ class SliceDataModule(LightningDataModule):
         self.__train_sampler = train_sampler
         self.__train_batch_size = train_batch_size
         self.__train_dataset = None
+        self.__val_dataset = None
+        self.__test_dataset = None
 
         if self.__config.num_workers != -1:
             self.__n_workers = min(self.__config.num_workers, cpu_count())
@@ -36,18 +38,36 @@ class SliceDataModule(LightningDataModule):
         return SliceGraphBatch(batch)
     
     def __create_dataset(self, data_path: str) -> Dataset:
-        return SliceDataset(data_path, self.__config, self.__vocab)
+        return SliceDataset(data_path, self.__config, self.__vocab, cache_size=self.__train_batch_size)
     
     def set_train_batch_size(self, batch_size: int):
         self.__train_batch_size = batch_size
 
+    def clear_cache(self):
+        if self.__train_dataset is not None:
+            self.__train_dataset.clear_cache()
+        if self.__val_dataset is not None:
+            self.__val_dataset.clear_cache()
+        if self.__test_dataset is not None:
+            self.__test_dataset.clear_cache()
+    
+    def get_cache_info(self):
+        """Get cache statistics from all datasets"""
+        info = {}
+        if self.__train_dataset is not None:
+            info['train'] = self.__train_dataset.get_cache_info()
+        if self.__val_dataset is not None:
+            info['val'] = self.__val_dataset.get_cache_info()
+        if self.__test_dataset is not None:
+            info['test'] = self.__test_dataset.get_cache_info()
+        return info
+    
     def train_dataloader(self) -> DataLoader:
         if self.__config.dataset.name == "BigVul":
             train_dataset_path = join(self.__dataset_root, f"{self.__config.dataset.version}_{self.__config.train_slices_filename}")
         else:
             train_dataset_path = join(self.__dataset_root, self.__config.train_slices_filename)
-        if self.__train_dataset is None:
-            self.__train_dataset = self.__create_dataset(train_dataset_path)
+        self.__train_dataset = self.__create_dataset(train_dataset_path)
 
         if self.__train_sampler:
             return DataLoader(
@@ -57,6 +77,7 @@ class SliceDataModule(LightningDataModule):
                 num_workers=self.__n_workers,
                 collate_fn=self.collate_wrapper,
                 pin_memory=False,
+                persistent_workers=False
             )
         return DataLoader(
             self.__train_dataset,
@@ -65,6 +86,7 @@ class SliceDataModule(LightningDataModule):
             num_workers=self.__n_workers,
             collate_fn=self.collate_wrapper,
             pin_memory=False,
+            persistent_workers=False
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -72,14 +94,15 @@ class SliceDataModule(LightningDataModule):
             val_dataset_path = join(self.__dataset_root, f"{self.__config.dataset.version}_{self.__config.val_slices_filename}")
         else:
             val_dataset_path = join(self.__dataset_root, self.__config.val_slices_filename)
-        val_dataset = self.__create_dataset(val_dataset_path)
+        self.__val_dataset = self.__create_dataset(val_dataset_path)
         return DataLoader(
-            val_dataset,
+            self.__val_dataset,
             batch_size=self.__config.hyper_parameters.test_batch_size,
             shuffle=False,
             num_workers=self.__n_workers,
             collate_fn=self.collate_wrapper,
             pin_memory=False,
+            persistent_workers=False
         )
 
     def test_dataloader(self) -> DataLoader:
@@ -87,14 +110,15 @@ class SliceDataModule(LightningDataModule):
             test_dataset_path = join(self.__dataset_root, f"{self.__config.dataset.version}_{self.__config.test_slices_filename}")
         else:
             test_dataset_path = join(self.__dataset_root, self.__config.test_slices_filename)
-        test_dataset = self.__create_dataset(test_dataset_path)
+        self.__test_dataset = self.__create_dataset(test_dataset_path)
         return DataLoader(
-            test_dataset,
+            self.__test_dataset,
             batch_size=self.__config.hyper_parameters.test_batch_size,
             shuffle=False,
             num_workers=self.__n_workers,
             collate_fn=self.collate_wrapper,
             pin_memory=False,
+            persistent_workers=False
         )
     
     def transfer_batch_to_device(

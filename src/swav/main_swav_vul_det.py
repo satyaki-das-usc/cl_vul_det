@@ -3,6 +3,7 @@ import json
 import torch
 import math
 import pickle
+import gc
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -160,12 +161,22 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
 
         optimizer.step()
 
+        del batched_graph, labels, graphs, logits, activations, activations_resampled, anchor_graph_encodings
+        del inputs, graph_encodings, output
+        del ce_loss, projection_loss, regularization_loss
+        del swav_loss, contrastive_loss, loss
+
+        if (it % 10) == 0 and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
     logging.info(f"Epoch {epoch + 1} - Cross-Entropy Loss: {np.mean(epoch_ce_losses):.4f}, Projection Loss: {np.mean(epoch_proj_losses):.4f}, Regularization Loss: {np.mean(epoch_reg_losses):.4f}, SwAV Loss: {np.mean(epoch_swav_losses):.4f}, Contrastive Loss: {np.mean(epoch_contrast_losses):.4f}")
     ce_losses.append(float(np.mean(epoch_ce_losses)))
     proj_losses.append(float(np.mean(epoch_proj_losses)))
     reg_losses.append(float(np.mean(epoch_reg_losses)))
     swav_losses.append(float(np.mean(epoch_swav_losses)))
     contrast_losses.append(float(np.mean(epoch_contrast_losses)))
+
+    del train_loader
 
 def eval(model, val_loader):
     progress_bar = tqdm(val_loader, desc="Validation")
@@ -183,6 +194,9 @@ def eval(model, val_loader):
             _, preds = logits.max(dim=1)
             all_preds.extend(preds.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
+
+            del batch, labels, graphs, logits, preds, loss
+    
     stats = {
         "eval_loss": total_loss / len(val_loader),
         "accuracy": accuracy_score(all_labels, all_preds),
@@ -190,6 +204,8 @@ def eval(model, val_loader):
         "recall": recall_score(all_labels, all_preds),
         "f1": f1_score(all_labels, all_preds)
     }
+    
+    del val_loader, all_preds, all_labels
     
     return stats
 
@@ -209,6 +225,9 @@ def test(model, test_loader):
             _, preds = logits.max(dim=1)
             all_preds.extend(preds.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
+
+            del batch, labels, graphs, logits, preds, loss
+    
     stats = {
         "test_loss": total_loss / len(test_loader),
         "accuracy": accuracy_score(all_labels, all_preds),
@@ -350,6 +369,15 @@ if __name__ == "__main__":
             best_val_loss = eval_stats["eval_loss"]
             torch.save(model.state_dict(), best_loss_checkpoint_path)
             logging.info(f"New best model saved with Loss: {best_val_loss:.4f}")
+        data_module.clear_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        gc.collect()
+
+        cache_info = data_module.get_cache_info()
+        if 'train' in cache_info:
+            print(f"Cache Info: {cache_info['train']}")
 
     plt.plot(ce_losses, label='Cross-Entropy Loss')
     plt.plot(proj_losses, label='Projection Loss')
@@ -375,14 +403,27 @@ if __name__ == "__main__":
     logging.info("Testing model with best validation F1...")
     model.load_state_dict(torch.load(best_f1_checkpoint_path, map_location=device))
     test_stats = test(model, data_module.test_dataloader())
+    data_module.clear_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    gc.collect()
     logging.info(f"Test Stats: {test_stats}")
     logging.info("Testing completed.")
     with open(join(checkpoint_dir, "test_statistics_best_val_f1.json"), "w") as wfi:
         json.dump(test_stats, wfi, indent=4)
     
+    
     logging.info("Testing model with best validation loss...")
     model.load_state_dict(torch.load(best_loss_checkpoint_path, map_location=device))
     test_stats = test(model, data_module.test_dataloader())
+    
+    data_module.clear_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    gc.collect()
+
     logging.info(f"Test Stats: {test_stats}")
     logging.info("Testing completed.")
     with open(join(checkpoint_dir, "test_statistics_best_val_loss.json"), "w") as wfi:
