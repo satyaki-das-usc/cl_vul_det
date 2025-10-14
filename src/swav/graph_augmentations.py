@@ -194,11 +194,13 @@ def generate_node_set_augmentation(slice_graph: nx.DiGraph, vocab: Vocabulary, m
     augmented_graph.add_node(aug_node)
     augmented_graph.nodes[aug_node]["sym_code"] = global_augmentation1
     augmented_graph.nodes[aug_node]["code_sym_token"] = tokenize_code_line(global_augmentation1, subtoken=False)
+    
     augmented_graph = SliceGraph(slice_graph=augmented_graph)
+    return augmented_graph
     augmented_graph = SliceGraphSample(graph=augmented_graph.to_torch_graph(vocab, max_len),
                         label=augmented_graph.label, slice_path=None)
-
     return augmented_graph
+
 
 def generate_edge_set_augmentation(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int) -> SliceGraphSample:
     # Create a copy of the original graph
@@ -237,6 +239,7 @@ def generate_edge_set_augmentation(slice_graph: nx.DiGraph, vocab: Vocabulary, m
     new_edges = [(cond_node, n, {"label": "CONTROLS", "direction": "forward"}) for n in controlled_nodes]
     augmented_graph.add_edges_from(new_edges)
     augmented_graph = SliceGraph(slice_graph=augmented_graph)
+    return augmented_graph
     augmented_graph = SliceGraphSample(graph=augmented_graph.to_torch_graph(vocab, max_len),
                         label=augmented_graph.label, slice_path=None)
 

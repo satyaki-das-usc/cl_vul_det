@@ -15,8 +15,8 @@ from src.torch_data.samples import SliceGraphSample
 from src.swav.graph_augmentations import generate_node_set_augmentation, generate_edge_set_augmentation
 
 def generate_SF_augmentations_per_sample(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int):
-    glob1_view = SliceGraph(slice_graph=generate_node_set_augmentation(slice_graph, vocab, max_len)).to_torch_graph(vocab, max_len)
-    glob2_view = SliceGraph(slice_graph=generate_edge_set_augmentation(slice_graph, vocab, max_len)).to_torch_graph(vocab, max_len)
+    glob1_view = generate_node_set_augmentation(slice_graph, vocab, max_len)
+    glob2_view = generate_edge_set_augmentation(slice_graph, vocab, max_len)
 
     control_edges = []
     dd_edges = []
