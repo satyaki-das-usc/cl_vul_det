@@ -39,6 +39,10 @@ def filter_warnings():
                    lineno=575)
     filterwarnings("ignore",
                    category=UserWarning,
+                   module="torch_geometric.data.collate",
+                   lineno=205)
+    filterwarnings("ignore",
+                   category=UserWarning,
                    module="src.models.modules.common_layers",
                    lineno=0)
 
