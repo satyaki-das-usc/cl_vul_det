@@ -32,9 +32,9 @@ class SliceGraphBatch:
     def pin_memory(self) -> "SliceGraphBatch":
         self.labels = self.labels.pin_memory()
         self.graphs = self.graphs.pin_memory()
-        # if self.augmented_views is not None:
-        #     self.augmented_views = [view.pin_memory() if hasattr(view, 'pin_memory') else view 
-        #                            for view in self.augmented_views]
+        if self.augmented_views is not None:
+            self.augmented_views = [view.pin_memory() if hasattr(view, 'pin_memory') else view 
+                                   for view in self.augmented_views]
         return self
 
     def move_to_device(self, device: torch.device):

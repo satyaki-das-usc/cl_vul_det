@@ -56,7 +56,7 @@ class SliceDataModule(LightningDataModule):
                 sampler=self.__train_sampler,
                 num_workers=self.__n_workers,
                 collate_fn=self.collate_wrapper,
-                pin_memory=True,
+                pin_memory=False,
             )
         return DataLoader(
             self.__train_dataset,
@@ -64,7 +64,7 @@ class SliceDataModule(LightningDataModule):
             shuffle=True,
             num_workers=self.__n_workers,
             collate_fn=self.collate_wrapper,
-            pin_memory=True,
+            pin_memory=False,
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -79,7 +79,7 @@ class SliceDataModule(LightningDataModule):
             shuffle=False,
             num_workers=self.__n_workers,
             collate_fn=self.collate_wrapper,
-            pin_memory=True,
+            pin_memory=False,
         )
 
     def test_dataloader(self) -> DataLoader:
@@ -94,7 +94,7 @@ class SliceDataModule(LightningDataModule):
             shuffle=False,
             num_workers=self.__n_workers,
             collate_fn=self.collate_wrapper,
-            pin_memory=True,
+            pin_memory=False,
         )
     
     def transfer_batch_to_device(
