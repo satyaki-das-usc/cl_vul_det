@@ -63,10 +63,10 @@ class SliceDataModule(LightningDataModule):
         return info
     
     def train_dataloader(self) -> DataLoader:
-        if self.__config.dataset.name == "BigVul":
-            train_dataset_path = join(self.__dataset_root, f"{self.__config.dataset.version}_{self.__config.train_slices_filename}")
-        else:
-            train_dataset_path = join(self.__dataset_root, self.__config.train_slices_filename)
+        # if self.__config.dataset.name == "BigVul":
+        #     train_dataset_path = join(self.__dataset_root, f"{self.__config.dataset.version}_{self.__config.train_slices_filename}")
+        # else:
+        train_dataset_path = join(self.__dataset_root, self.__config.train_slices_filename)
         self.__train_dataset = self.__create_dataset(train_dataset_path)
 
         if self.__train_sampler:
@@ -90,10 +90,10 @@ class SliceDataModule(LightningDataModule):
         )
 
     def val_dataloader(self) -> DataLoader:
-        if self.__config.dataset.name == "BigVul":
-            val_dataset_path = join(self.__dataset_root, f"{self.__config.dataset.version}_{self.__config.val_slices_filename}")
-        else:
-            val_dataset_path = join(self.__dataset_root, self.__config.val_slices_filename)
+        # if self.__config.dataset.name == "BigVul":
+        #     val_dataset_path = join(self.__dataset_root, f"{self.__config.dataset.version}_{self.__config.val_slices_filename}")
+        # else:
+        val_dataset_path = join(self.__dataset_root, self.__config.val_slices_filename)
         self.__val_dataset = self.__create_dataset(val_dataset_path)
         return DataLoader(
             self.__val_dataset,
@@ -106,10 +106,10 @@ class SliceDataModule(LightningDataModule):
         )
 
     def test_dataloader(self) -> DataLoader:
-        if self.__config.dataset.name == "BigVul":
-            test_dataset_path = join(self.__dataset_root, f"{self.__config.dataset.version}_{self.__config.test_slices_filename}")
-        else:
-            test_dataset_path = join(self.__dataset_root, self.__config.test_slices_filename)
+        # if self.__config.dataset.name == "BigVul":
+        #     test_dataset_path = join(self.__dataset_root, f"{self.__config.dataset.version}_{self.__config.test_slices_filename}")
+        # else:
+        test_dataset_path = join(self.__dataset_root, self.__config.test_slices_filename)
         self.__test_dataset = self.__create_dataset(test_dataset_path)
         return DataLoader(
             self.__test_dataset,
