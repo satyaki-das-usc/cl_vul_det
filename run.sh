@@ -14,7 +14,10 @@ export PATH=/media/satyaki/160f047a-dacc-449d-9208-a75717e899a1/research/minicon
 export TMPDIR=/media/satyaki/160f047a-dacc-449d-9208-a75717e899a1/pip_tmp
 
 conda remove --name cl_vul_det --all
+# For Linux x86 architecture
 conda create -n cl_vul_det python=3.10 notebook ipython
+# For ARM64 architecture
+conda create -n cl_vul_det -c conda-forge pytorch-gpu python=3.10 -y
 conda deactivate
 conda activate cl_vul_det
 
