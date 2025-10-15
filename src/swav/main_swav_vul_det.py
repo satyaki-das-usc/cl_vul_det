@@ -304,23 +304,11 @@ if __name__ == "__main__":
     if config.hyper_parameters.use_imbalanced_sampler:
         logging.info("Using Imbalanced Sampler for training data loader.")
 
-        logging.info(f"Going over {len(train_slices)} files...")
-        with Manager() as m:
-            message_queue = m.Queue()  # type: ignore
-            pool = Pool(USE_CPU)
-            process_func = functools.partial(get_slice_label_parallel, queue=message_queue)
-            ys: List = [
-                y
-                for y in tqdm(
-                    pool.imap_unordered(process_func, train_slices),
-                    desc=f"Slices",
-                    total=len(train_slices),
-                )
-            ]
-            message_queue.put("finished")
-            pool.close()
-            pool.join()
-        logging.info("Completed.")
+        ys = []
+        for slice_path in tqdm(train_slices, desc=f"Slice files"):
+            with open(slice_path, "rb") as rbfi:
+                slice_graph: nx.DiGraph = pickle.load(rbfi)
+                ys.append(slice_graph.graph["label"])
         
         neg_cnt = ys.count(0)
         pos_cnt = len(ys) - neg_cnt
