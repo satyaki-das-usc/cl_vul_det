@@ -287,6 +287,21 @@ if __name__ == "__main__":
         train_slices = json.load(rfi)
     logging.info(f"Completed. Loaded {len(train_slices)} slices.")
 
+    num_samples = len(train_slices)
+    sampler = None
+    if config.hyper_parameters.use_imbalanced_sampler:
+        logging.info("Using Imbalanced Sampler for training data loader.")
+        ys = []
+        for slice_path in tqdm(train_slices, desc=f"Slice files"):
+            with open(slice_path, "rb") as rbfi:
+                slice_graph: nx.DiGraph = pickle.load(rbfi)
+                ys.append(slice_graph.graph["label"])
+        neg_cnt = ys.count(0)
+        pos_cnt = len(ys) - neg_cnt
+        majority_cnt = max(neg_cnt, pos_cnt)
+        num_samples = majority_cnt * 2
+        sampler = ImbalancedSampler(torch.tensor(ys, dtype=torch.long), num_samples=num_samples)
+
     # optimizer = torch.optim.AdamW([{
     #             "params": p
     #         } for p in model.parameters()], config.hyper_parameters.learning_rate)
@@ -298,7 +313,7 @@ if __name__ == "__main__":
         momentum=0.9,
         weight_decay=config.swav.wd
     )
-    train_loader_lens = [math.ceil(len(train_slices) / batch_size) for batch_size in config.hyper_parameters.batch_sizes]
+    train_loader_lens = [math.ceil(num_samples / batch_size) for batch_size in config.hyper_parameters.batch_sizes]
     warmup_lr_schedule = np.linspace(config.swav.start_warmup, config.swav.base_lr, sum([train_loader_lens[i // 10] for i in range(config.swav.warmup_epochs)]))
     iters = np.arange(sum([train_loader_lens[i // 10] for i in range(config.swav.warmup_epochs, config.hyper_parameters.n_epochs)]))
     cosine_lr_schedule = np.array([config.swav.final_lr + 0.5 * (config.swav.base_lr - config.swav.final_lr) * (1 + \
@@ -342,18 +357,6 @@ if __name__ == "__main__":
     best_val_f1 = 0.0
     best_val_loss = float('inf')
     logging.info("Loading data module...")
-    sampler = None
-    if config.hyper_parameters.use_imbalanced_sampler:
-        logging.info("Using Imbalanced Sampler for training data loader.")
-        ys = []
-        for slice_path in tqdm(train_slices, desc=f"Slice files"):
-            with open(slice_path, "rb") as rbfi:
-                slice_graph: nx.DiGraph = pickle.load(rbfi)
-                ys.append(slice_graph.graph["label"])
-        neg_cnt = ys.count(0)
-        pos_cnt = len(ys) - neg_cnt
-        majority_cnt = max(neg_cnt, pos_cnt)
-        sampler = ImbalancedSampler(torch.tensor(ys, dtype=torch.long), num_samples=majority_cnt*2)
     data_module = SliceDataModule(config, vocab, config.hyper_parameters.batch_sizes[0], train_sampler=sampler, use_temp_data=args.use_temp_data)
     logging.info("Data module loading completed.")
     for epoch in range(config.hyper_parameters.n_epochs):
