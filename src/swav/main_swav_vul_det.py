@@ -4,16 +4,17 @@ import torch
 import math
 import pickle
 import gc
+import functools
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 
 import logging
 
-from multiprocessing import cpu_count
+from multiprocessing import Manager, Pool, Queue, cpu_count
 from os.path import join, splitext, basename, exists
 from omegaconf import DictConfig, OmegaConf
-from typing import cast
+from typing import cast, List
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from imblearn.under_sampling import ClusterCentroids
@@ -65,6 +66,17 @@ gnn_name_map = {
     "gated": "Gated",
     "st": "ST"
 }
+
+def get_slice_label_parallel(slice_path, queue: Queue):
+    try:
+        with open(slice_path, "rb") as rbfi:
+            slice_graph: nx.DiGraph = pickle.load(rbfi)
+        
+        return slice_graph.graph["label"]
+    
+    except Exception as e:
+        logging.error(slice_path)
+        raise e
 
 def train(train_loader, model, optimizer, epoch, lr_schedule):
     logging.info(f"Epoch {epoch + 1}")
@@ -291,11 +303,25 @@ if __name__ == "__main__":
     sampler = None
     if config.hyper_parameters.use_imbalanced_sampler:
         logging.info("Using Imbalanced Sampler for training data loader.")
-        ys = []
-        for slice_path in tqdm(train_slices, desc=f"Slice files"):
-            with open(slice_path, "rb") as rbfi:
-                slice_graph: nx.DiGraph = pickle.load(rbfi)
-                ys.append(slice_graph.graph["label"])
+
+        logging.info(f"Going over {len(train_slices)} files...")
+        with Manager() as m:
+            message_queue = m.Queue()  # type: ignore
+            pool = Pool(USE_CPU)
+            process_func = functools.partial(get_slice_label_parallel, queue=message_queue)
+            ys: List = [
+                y
+                for y in tqdm(
+                    pool.imap_unordered(process_func, train_slices),
+                    desc=f"Slices",
+                    total=len(train_slices),
+                )
+            ]
+            message_queue.put("finished")
+            pool.close()
+            pool.join()
+        logging.info("Completed.")
+        
         neg_cnt = ys.count(0)
         pos_cnt = len(ys) - neg_cnt
         majority_cnt = max(neg_cnt, pos_cnt)
