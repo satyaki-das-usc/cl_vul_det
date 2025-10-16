@@ -307,12 +307,24 @@ if __name__ == "__main__":
     if config.hyper_parameters.use_imbalanced_sampler:
         logging.info("Using Imbalanced Sampler for training data loader.")
 
-        ys = []
-        for slice_path in tqdm(train_slices, desc=f"Slice files"):
-            with open(slice_path, "rb") as rbfi:
-                slice_graph: nx.DiGraph = pickle.load(rbfi)
-                ys.append(slice_graph.graph["label"])
-        
+        train_labels_filepath = join(dataset_root, config.train_labels_filename)
+        train_labels = []
+        if not exists(train_labels_filepath):
+            logging.info(f"{train_labels_filepath} not found. Retriving labels...")
+            for slice_path in tqdm(train_slices, desc=f"Slice files"):
+                with open(slice_path, "rb") as rbfi:
+                    slice_graph: nx.DiGraph = pickle.load(rbfi)
+                    train_labels.append((slice_path, slice_graph.graph["label"]))
+            logging.info(f"Successfully retrieved {len(train_labels)} labels. Writing all labels to {train_labels_filepath}...")
+            with open(train_labels_filepath, "w") as wfi:
+                json.dump(train_labels, wfi)
+        else:
+            logging.info(f"Reading train labels from {train_labels_filepath}...")
+            with open(train_labels_filepath, "r") as rfi:
+                train_labels = json.load(rfi)
+            logging.info(f"Completed. Retrieved {len(train_labels)} labels.")
+
+        ys = [t[-1] for t in train_labels]
         neg_cnt = ys.count(0)
         pos_cnt = len(ys) - neg_cnt
         majority_cnt = max(neg_cnt, pos_cnt)
