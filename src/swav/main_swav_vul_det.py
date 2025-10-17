@@ -2,7 +2,7 @@ import os
 import json
 
 import torch
-torch.multiprocessing.set_sharing_strategy('file_system')
+# torch.multiprocessing.set_sharing_strategy('file_system')
 
 import math
 import pickle
@@ -391,7 +391,7 @@ if __name__ == "__main__":
     for epoch in range(config.hyper_parameters.n_epochs):
         train_loader = data_module.train_dataloader()
         train(train_loader, model, optimizer, epoch, lr_schedule)
-        data_module.set_train_batch_size(config.hyper_parameters.batch_sizes[min((epoch + 1) // 10, len(config.hyper_parameters.batch_sizes) - 1)])
+        data_module.set_train_batch_size(config.hyper_parameters.batch_sizes[min(epoch + 1, len(config.hyper_parameters.batch_sizes) - 1)])
         eval_stats = eval(model, data_module.val_dataloader())
         if eval_stats["f1"] > best_val_f1:
             best_val_f1 = eval_stats["f1"]
