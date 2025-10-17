@@ -4,6 +4,7 @@ ipywidgets
 
 # Deep Learning
 torch
+# torch==2.8.0
 torch-geometric
 pytorch-lightning
 wordninja
