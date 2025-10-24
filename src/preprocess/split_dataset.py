@@ -32,39 +32,39 @@ if __name__ == "__main__":
         all_slices = json.load(rfi)
     logging.info(f"Completed. Loaded {len(all_slices)} slices.")
 
-    if config.dataset.name == "BigVul":
-        rem, v1 = train_test_split(all_slices, test_size=0.2)
-        v2, v3 = train_test_split(rem, test_size=0.5)
-        v2, v4 = train_test_split(v2, test_size=0.5)
-        v3, v5 = train_test_split(v3, test_size=0.5)
+    # if config.dataset.name == "BigVul":
+    #     rem, v1 = train_test_split(all_slices, test_size=0.2)
+    #     v2, v3 = train_test_split(rem, test_size=0.5)
+    #     v2, v4 = train_test_split(v2, test_size=0.5)
+    #     v3, v5 = train_test_split(v3, test_size=0.5)
 
-        dataset_splits = [v1, v2, v3, v4, v5]
+    #     dataset_splits = [v1, v2, v3, v4, v5]
 
-        for i, split in enumerate(dataset_splits):
-            train_slices, test_slices = train_test_split(split, test_size=0.2)
-            test_slices, val_slices = train_test_split(test_slices, test_size=0.5)
+    #     for i, split in enumerate(dataset_splits):
+    #         train_slices, test_slices = train_test_split(split, test_size=0.2)
+    #         test_slices, val_slices = train_test_split(test_slices, test_size=0.5)
 
-            train_slices_filepath = join(dataset_root, f"v{i+1}_{config.train_slices_filename}")
-            logging.info(f"Saving {len(train_slices)} slices to {train_slices_filepath}...")
-            with open(train_slices_filepath, "w") as wfi:
-                json.dump(train_slices, wfi)
-            logging.info("Completed.")
+    #         train_slices_filepath = join(dataset_root, f"v{i+1}_{config.train_slices_filename}")
+    #         logging.info(f"Saving {len(train_slices)} slices to {train_slices_filepath}...")
+    #         with open(train_slices_filepath, "w") as wfi:
+    #             json.dump(train_slices, wfi)
+    #         logging.info("Completed.")
 
-            val_slices_filepath = join(dataset_root, f"v{i+1}_{config.val_slices_filename}")
-            logging.info(f"Saving {len(val_slices)} slices to {val_slices_filepath}...")
-            with open(val_slices_filepath, "w") as wfi:
-                json.dump(val_slices, wfi)
-            logging.info("Completed.")
+    #         val_slices_filepath = join(dataset_root, f"v{i+1}_{config.val_slices_filename}")
+    #         logging.info(f"Saving {len(val_slices)} slices to {val_slices_filepath}...")
+    #         with open(val_slices_filepath, "w") as wfi:
+    #             json.dump(val_slices, wfi)
+    #         logging.info("Completed.")
 
-            test_slices_filepath = join(dataset_root, f"v{i+1}_{config.test_slices_filename}")
-            logging.info(f"Saving {len(test_slices)} slices to {test_slices_filepath}...")
-            with open(test_slices_filepath, "w") as wfi:
-                json.dump(test_slices, wfi)
-            logging.info(f"Completed.")
+    #         test_slices_filepath = join(dataset_root, f"v{i+1}_{config.test_slices_filename}")
+    #         logging.info(f"Saving {len(test_slices)} slices to {test_slices_filepath}...")
+    #         with open(test_slices_filepath, "w") as wfi:
+    #             json.dump(test_slices, wfi)
+    #         logging.info(f"Completed.")
         
-        logging.info("=========End session=========")
-        logging.shutdown()
-        exit(0)
+    #     logging.info("=========End session=========")
+    #     logging.shutdown()
+    #     exit(0)
 
     train_slices, test_slices = train_test_split(all_slices, test_size=0.2)
     test_slices, val_slices = train_test_split(test_slices, test_size=0.5)
