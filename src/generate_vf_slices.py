@@ -202,6 +202,8 @@ def remove_static_control_dependency(CPG: nx.DiGraph, joern_nodes: List[Dict]) -
 
     return filtered_CPG
 
+def find_all(records, key, value):
+    return [d for d in records if d.get(key) == value]
 
 def build_CPG(code_path: str,
               source_path: str) -> Tuple[nx.DiGraph, Dict[str, Set[int]]]:
@@ -217,6 +219,19 @@ def build_CPG(code_path: str,
         return None, None
     nodes = read_csv(nodes_path)
     edges = read_csv(edges_path)
+
+    cfg_of_function_edges = find_all(edges, "type", "IS_FUNCTION_OF_CFG")
+    function_node_ids = [edge["start"] for edge in cfg_of_function_edges]
+    cfg_node_ids = [edge["end"] for edge in cfg_of_function_edges]
+
+    for func_nid, cfg_nid in zip(function_node_ids, cfg_node_ids):
+        for edge in edges:
+            if edge["type"] != "CONTROLS":
+                continue
+            if edge["start"] != cfg_nid:
+                continue
+            edge["start"] = func_nid
+
     checking_call_lines = set()
     alloc_call_lines = set()
     dealloc_call_lines = set()
