@@ -307,29 +307,34 @@ if __name__ == "__main__":
     if config.hyper_parameters.use_imbalanced_sampler:
         logging.info("Using Imbalanced Sampler for training data loader.")
 
-        train_labels_filepath = join(dataset_root, config.train_labels_filename)
-        train_labels = []
-        if not exists(train_labels_filepath):
-            logging.info(f"{train_labels_filepath} not found. Retriving labels...")
+        train_stats_filepath = join(dataset_root, config.train_stats_filename)
+        ys = []
+        if not exists(train_stats_filepath):
+            logging.info(f"{train_stats_filepath} not found. Retriving labels...")
             for slice_path in tqdm(train_slices, desc=f"Slice files"):
                 with open(slice_path, "rb") as rbfi:
                     slice_graph: nx.DiGraph = pickle.load(rbfi)
-                    train_labels.append((slice_path, slice_graph.graph["label"]))
-            logging.info(f"Successfully retrieved {len(train_labels)} labels. Writing all labels to {train_labels_filepath}...")
-            with open(train_labels_filepath, "w") as wfi:
-                json.dump(train_labels, wfi)
-        else:
-            logging.info(f"Reading train labels from {train_labels_filepath}...")
-            with open(train_labels_filepath, "r") as rfi:
-                train_labels = json.load(rfi)
-            logging.info(f"Completed. Retrieved {len(train_labels)} labels.")
+                    ys.append((slice_path, slice_graph.graph["label"]))
+            neg_cnt = ys.count(0)
+            pos_cnt = len(ys) - neg_cnt
+            majority_cnt = max(neg_cnt, pos_cnt)
+            sampler_num_samples = majority_cnt * 2
 
-        ys = [t[-1] for t in train_labels]
-        neg_cnt = ys.count(0)
-        pos_cnt = len(ys) - neg_cnt
-        majority_cnt = max(neg_cnt, pos_cnt)
-        num_samples = majority_cnt * 2
-        sampler = ImbalancedSampler(torch.tensor(ys, dtype=torch.long), num_samples=num_samples)
+            dataset_stats = {
+                "sampler_num_samples": sampler_num_samples,
+                "neg_cnt": neg_cnt,
+                "pos_cnt": pos_cnt,
+            }
+            logging.info(f"Successfully retrieved {len(ys)} labels. Writing all stats to {train_stats_filepath}...")
+            with open(train_stats_filepath, "w") as wfi:
+                json.dump(dataset_stats, wfi, indent=2)
+        else:
+            logging.info(f"Reading dataset stats from {train_stats_filepath}...")
+            with open(train_stats_filepath, "r") as rfi:
+                dataset_stats = json.load(rfi)
+            logging.info(f"Completed. Retrieved stats.")
+
+        sampler = ImbalancedSampler(torch.tensor(ys, dtype=torch.long), num_samples=dataset_stats["sampler_num_samples"])
 
     # optimizer = torch.optim.AdamW([{
     #             "params": p

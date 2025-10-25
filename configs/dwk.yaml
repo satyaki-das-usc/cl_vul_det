@@ -24,6 +24,7 @@ file_slices_filename: file_slices.json
 all_slices_filename: all_slices.json
 train_slices_filename: train_slices.json
 train_labels_filename: train_labels.json
+train_stats_filename: train_stats.json
 val_slices_filename: val_slices.json
 test_slices_filename: test_slices.json
 ground_truth_filename: ground_truth.json
