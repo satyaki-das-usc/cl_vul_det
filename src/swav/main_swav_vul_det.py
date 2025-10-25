@@ -334,7 +334,8 @@ if __name__ == "__main__":
                 dataset_stats = json.load(rfi)
             logging.info(f"Completed. Retrieved stats.")
 
-        sampler = ImbalancedSampler(torch.tensor(ys, dtype=torch.long), num_samples=dataset_stats["sampler_num_samples"])
+        num_samples = dataset_stats["sampler_num_samples"]
+        sampler = ImbalancedSampler(torch.tensor(ys, dtype=torch.long), num_samples=num_samples)
 
     # optimizer = torch.optim.AdamW([{
     #             "params": p
