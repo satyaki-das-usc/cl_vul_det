@@ -40,8 +40,8 @@ PYTHONPATH="." python src/generate_vf_slices.py --only_clear_slices &&
 PYTHONPATH="." python src/generate_vf_slices.py &&
 PYTHONPATH="." python src/tokenize_slices.py &&
 PYTHONPATH="." python src/generate_file_slice_mapping.py &&
-xargs -d '\n' -a duplicate_slices.txt rm -- &&
 PYTHONPATH="." python src/preprocess/remove_duplicates.py &&
+xargs -d '\n' -a duplicate_slices.txt rm -- &&
 PYTHONPATH="." python src/preprocess/word_embedding.py &&
 PYTHONPATH="." python src/preprocess/split_dataset.py &&
 PYTHONPATH="." python src/swav/main_swav_vul_det.py &&
