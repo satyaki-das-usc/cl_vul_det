@@ -39,7 +39,8 @@ def process_file_parallel(cpp_path, queue: Queue):
                 unique_vul_slice_set.add(slice_graph.graph["slice_sym_code"])
                 unique_vul_slice_list.append((slice_path, slice_graph))
             else:
-                os.system(f"rm {slice_path}")
+                with open("duplicate_slices.txt", "a") as afi:
+                    afi.write(f"{slice_path}\n")
         
         unique_nonvul_slice_set = set()
         unique_nonvul_slice_list = []
@@ -49,7 +50,8 @@ def process_file_parallel(cpp_path, queue: Queue):
                 unique_nonvul_slice_set.add(slice_graph.graph["slice_sym_code"])
                 unique_nonvul_slice_list.append((slice_path, slice_graph))
             else:
-                os.system(f"rm {slice_path}")
+                with open("duplicate_slices.txt", "a") as afi:
+                    afi.write(f"{slice_path}\n")
         
         final_unique_nonvul_slice_list = []
         for entry in unique_nonvul_slice_list:
@@ -57,7 +59,8 @@ def process_file_parallel(cpp_path, queue: Queue):
             if slice_graph.graph["slice_sym_code"] not in unique_vul_slice_set:
                 final_unique_nonvul_slice_list.append((slice_path, slice_graph))
             else:
-                os.system(f"rm {slice_path}")
+                with open("duplicate_slices.txt", "a") as afi:
+                    afi.write(f"{slice_path}\n")
         
         return [entry[0] for entry in unique_vul_slice_list + final_unique_nonvul_slice_list]
     except Exception as e:
@@ -78,7 +81,9 @@ if __name__ == "__main__":
     dataset_root = join(config.data_folder, config.dataset.name)
     if args.use_temp_data:
         dataset_root = config.temp_root
-    
+
+    os.system(f"touch duplicate_slices.txt")
+
     file_slices_path = join(dataset_root, config.file_slices_filename)
     logging.info(f"Loading filewise generated slices from {file_slices_path}...")
     with open(file_slices_path, "r") as rfi:

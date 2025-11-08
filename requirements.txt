@@ -25,3 +25,5 @@ imbalanced-learn
 scikit-learn
 commode-utils
 matplotlib
+tree-sitter
+tree-sitter-cpp
