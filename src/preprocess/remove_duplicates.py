@@ -92,23 +92,29 @@ if __name__ == "__main__":
 
     logging.info(f"Going over {len(file_slices)} files...")
     cpp_paths = list(file_slices.keys())
-    with Manager() as m:
-        message_queue = m.Queue()  # type: ignore
-        pool = Pool(USE_CPU)
-        process_func = functools.partial(process_file_parallel, queue=message_queue)
-        unique_slice_list: List = [
-            file_slice
-            for file_slices in tqdm(
-                pool.imap_unordered(process_func, cpp_paths),
-                desc=f"Cpp files",
-                total=len(cpp_paths),
-            )
-            for file_slice in file_slices
-        ]
+    if USE_CPU > 1:
+        with Manager() as m:
+            message_queue = m.Queue()  # type: ignore
+            pool = Pool(USE_CPU)
+            process_func = functools.partial(process_file_parallel, queue=message_queue)
+            unique_slice_list: List = [
+                file_slice
+                for file_slices in tqdm(
+                    pool.imap_unordered(process_func, cpp_paths),
+                    desc=f"Cpp files",
+                    total=len(cpp_paths),
+                )
+                for file_slice in file_slices
+            ]
 
-        message_queue.put("finished")
-        pool.close()
-        pool.join()
+            message_queue.put("finished")
+            pool.close()
+            pool.join()
+    else:
+        unique_slice_list = []
+        for cpp_path in tqdm(cpp_paths, desc="Cpp files", total=len(cpp_paths)):
+            file_unique_slices = process_file_parallel(cpp_path, queue=None)
+            unique_slice_list.extend(file_unique_slices)
     
     logging.info(f"Total unique slices: {len(unique_slice_list)}")
     all_slices_filepath = join(dataset_root, config.all_slices_filename)
