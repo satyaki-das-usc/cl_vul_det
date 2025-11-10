@@ -26,7 +26,8 @@ class LazyStatements:
         for slice_path in tqdm(self.all_slices):
             with open(slice_path, "rb") as rbfi:
                 slice_graph: nx.DiGraph = pickle.load(rbfi)
-                yield slice_graph.graph['slice_sym_token']
+                for sentence in slice_graph.graph['slice_sym_token']:
+                    yield sentence
 
 if __name__ == "__main__":
     arg_parser = get_arg_parser()
