@@ -35,15 +35,15 @@ if __name__ == "__main__":
         all_slices = json.load(rfi)
     logging.info(f"Completed. Loaded {len(all_slices)} slices.")
 
-    all_tokens_list = set()
+    all_tokens_list = []
     logging.info(f"Going over {len(all_slices)} files...")
     for slice_path in tqdm(all_slices):
         with open(slice_path, "rb") as rbfi:
             slice_graph: nx.DiGraph = pickle.load(rbfi)
-        all_tokens_list.update(slice_graph.graph['slice_sym_token'])
+        all_tokens_list += slice_graph.graph['slice_sym_token']
     logging.info(f"Completed. Total tokens collected: {len(all_tokens_list)}")
 
-    model = Word2Vec(sentences=[list(all_tokens_list)], min_count=3, vector_size=config.gnn.embed_size,
+    model = Word2Vec(sentences=all_tokens_list, min_count=3, vector_size=config.gnn.embed_size,
                     max_vocab_size=config.dataset.token.vocabulary_size, workers=USE_CPU, sg=1, epochs=10)
     logging.info(f"Word2Vec model created with {len(model.wv.index_to_key)} unique tokens...")
     w2v_save_path = join(dataset_root, "w2v.wv")
