@@ -14,6 +14,20 @@ from tqdm import tqdm
 
 from src.common_utils import get_arg_parser, init_log
 
+class LazyStatements:
+    def __init__(self, all_slices_filepath: str):
+        logging.info(f"Loading all generated slices from {all_slices_filepath}...")
+        with open(all_slices_filepath, "r") as rfi:
+            self.all_slices = json.load(rfi)
+        logging.info(f"Completed. Loaded {len(self.all_slices)} slices.")
+
+    def __iter__(self):
+        logging.info(f"Going over {len(self.all_slices)} files...")
+        for slice_path in tqdm(self.all_slices):
+            with open(slice_path, "rb") as rbfi:
+                slice_graph: nx.DiGraph = pickle.load(rbfi)
+                yield slice_graph.graph['slice_sym_token']
+
 if __name__ == "__main__":
     arg_parser = get_arg_parser()
     args = arg_parser.parse_args()
@@ -30,18 +44,7 @@ if __name__ == "__main__":
         dataset_root = config.temp_root
     
     all_slices_filepath = join(dataset_root, config.all_slices_filename)
-    logging.info(f"Loading all generated slices from {all_slices_filepath}...")
-    with open(all_slices_filepath, "r") as rfi:
-        all_slices = json.load(rfi)
-    logging.info(f"Completed. Loaded {len(all_slices)} slices.")
-
-    all_tokens_list = []
-    logging.info(f"Going over {len(all_slices)} files...")
-    for slice_path in tqdm(all_slices):
-        with open(slice_path, "rb") as rbfi:
-            slice_graph: nx.DiGraph = pickle.load(rbfi)
-        all_tokens_list += slice_graph.graph['slice_sym_token']
-    logging.info(f"Completed. Total tokens collected: {len(all_tokens_list)}")
+    all_tokens_list = LazyStatements(all_slices_filepath)
 
     model = Word2Vec(sentences=all_tokens_list, min_count=3, vector_size=config.gnn.embed_size,
                     max_vocab_size=config.dataset.token.vocabulary_size, workers=USE_CPU, sg=1, epochs=10)
