@@ -44,9 +44,9 @@ if __name__ == "__main__":
     if args.use_temp_data:
         dataset_root = config.temp_root
     
-    train_slices_filepath = join(dataset_root, config.train_slices_filename)
-    logging.info(f"Loading all generated slices from {train_slices_filepath}...")
-    with open(train_slices_filepath, "r") as rfi:
+    all_slices_filepath = join(dataset_root, config.all_slices_filename)
+    logging.info(f"Loading all generated slices from {all_slices_filepath}...")
+    with open(all_slices_filepath, "r") as rfi:
         all_slices = json.load(rfi)
     logging.info(f"Completed. Loaded {len(all_slices)} slices.")
 
