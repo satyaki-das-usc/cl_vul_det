@@ -8,6 +8,8 @@ set -u  # Treat unset variables as an error and exit immediately
 set -o pipefail  # Consider a pipeline to fail if any command in the pipeline fails
 
 # Your script starts here
+git clone https://github.com/satyaki-das-usc/cl_vul_det.git
+cd cl_vul_det
 
 export PATH=/media/satyaki/160f047a-dacc-449d-9208-a75717e899a1/research/miniconda3/bin:$PATH
 
