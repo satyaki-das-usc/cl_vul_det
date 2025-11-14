@@ -8,6 +8,13 @@ set -u  # Treat unset variables as an error and exit immediately
 set -o pipefail  # Consider a pipeline to fail if any command in the pipeline fails
 
 # Your script starts here
+# For Linux x86 architecture
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash ~/Miniconda3-latest-Linux-x86_64.sh
+# For ARM64 architecture
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh
+bash ~/Miniconda3-latest-Linux-aarch64.sh
+
 git clone https://github.com/satyaki-das-usc/cl_vul_det.git
 cd cl_vul_det
 
