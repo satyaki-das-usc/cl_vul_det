@@ -3,8 +3,8 @@ ipykernel
 ipywidgets
 
 # Deep Learning
-torch
-# torch==2.8.0
+torch # For Linux x86 architecture
+# torch==2.8.0 # For ARM64 architecture
 torch-geometric
 pytorch-lightning
 wordninja
