@@ -256,6 +256,7 @@ def test(model, test_loader):
 if __name__ == "__main__":
     filter_warnings()
     arg_parser = get_arg_parser()
+    arg_parser.add_argument("--skip_training", action='store_true', help="Skip training phase")
     arg_parser.add_argument("--no_cl", action='store_true', help="Use contrastive learning")
     arg_parser.add_argument("--exclude_NNs", action='store_true', help="Exclude NN pairs during contrastive learning")
     arg_parser.add_argument("--use_lr_warmup", action='store_true', help="Exclude Learning Rate warmup")
@@ -395,49 +396,50 @@ if __name__ == "__main__":
     logging.info("Loading data module...")
     data_module = SliceDataModule(config, vocab, config.hyper_parameters.batch_sizes[0], train_sampler=sampler, use_temp_data=args.use_temp_data)
     logging.info("Data module loading completed.")
-    for epoch in range(config.hyper_parameters.n_epochs):
-        train_loader = data_module.train_dataloader()
-        train(train_loader, model, optimizer, epoch, lr_schedule)
-        data_module.set_train_batch_size(config.hyper_parameters.batch_sizes[min(epoch + 1, len(config.hyper_parameters.batch_sizes) - 1)])
-        eval_stats = eval(model, data_module.val_dataloader())
-        if eval_stats["f1"] > best_val_f1:
-            best_val_f1 = eval_stats["f1"]
-            torch.save(model.state_dict(), best_f1_checkpoint_path)
-            logging.info(f"New best model saved with F1: {best_val_f1:.4f}")
-        if eval_stats["eval_loss"] < best_val_loss:
-            best_val_loss = eval_stats["eval_loss"]
-            torch.save(model.state_dict(), best_loss_checkpoint_path)
-            logging.info(f"New best model saved with Loss: {best_val_loss:.4f}")
-        data_module.clear_cache()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+    if not args.skip_training:
+        for epoch in range(config.hyper_parameters.n_epochs):
+            train_loader = data_module.train_dataloader()
+            train(train_loader, model, optimizer, epoch, lr_schedule)
+            data_module.set_train_batch_size(config.hyper_parameters.batch_sizes[min(epoch + 1, len(config.hyper_parameters.batch_sizes) - 1)])
+            eval_stats = eval(model, data_module.val_dataloader())
+            if eval_stats["f1"] > best_val_f1:
+                best_val_f1 = eval_stats["f1"]
+                torch.save(model.state_dict(), best_f1_checkpoint_path)
+                logging.info(f"New best model saved with F1: {best_val_f1:.4f}")
+            if eval_stats["eval_loss"] < best_val_loss:
+                best_val_loss = eval_stats["eval_loss"]
+                torch.save(model.state_dict(), best_loss_checkpoint_path)
+                logging.info(f"New best model saved with Loss: {best_val_loss:.4f}")
+            data_module.clear_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
-        gc.collect()
+            gc.collect()
 
-        cache_info = data_module.get_cache_info()
-        if 'train' in cache_info:
-            print(f"Cache Info: {cache_info['train']}")
+            cache_info = data_module.get_cache_info()
+            if 'train' in cache_info:
+                print(f"Cache Info: {cache_info['train']}")
 
-    plt.plot(ce_losses, label='Cross-Entropy Loss')
-    plt.plot(proj_losses, label='Projection Loss')
-    plt.plot(reg_losses, label='Regularization Loss')
-    plt.plot(swav_losses, label='SwAV Loss')
-    plt.plot(contrast_losses, label='Contrastive Loss')
-    plt.xlabel('Iteration')
-    plt.ylabel('Loss')
-    plt.legend()
-    plt.grid(True)
-    plt.title('Training Loss Convergence')
-    plt.savefig(join(checkpoint_dir, 'training_losses.png'), bbox_inches='tight')
-    plt.close()
+        plt.plot(ce_losses, label='Cross-Entropy Loss')
+        plt.plot(proj_losses, label='Projection Loss')
+        plt.plot(reg_losses, label='Regularization Loss')
+        plt.plot(swav_losses, label='SwAV Loss')
+        plt.plot(contrast_losses, label='Contrastive Loss')
+        plt.xlabel('Iteration')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.grid(True)
+        plt.title('Training Loss Convergence')
+        plt.savefig(join(checkpoint_dir, 'training_losses.png'), bbox_inches='tight')
+        plt.close()
 
-    logging.info("Testing model after training...")
-    test_stats = test(model, data_module.test_dataloader())
-    logging.info(f"Test Stats: {test_stats}")
-    logging.info("Testing completed.")
+        logging.info("Testing model after training...")
+        test_stats = test(model, data_module.test_dataloader())
+        logging.info(f"Test Stats: {test_stats}")
+        logging.info("Testing completed.")
 
-    with open(join(checkpoint_dir, "test_statistics_epoch100.json"), "w") as wfi:
-        json.dump(test_stats, wfi, indent=4)
+        with open(join(checkpoint_dir, "test_statistics_epoch100.json"), "w") as wfi:
+            json.dump(test_stats, wfi, indent=4)
     
     logging.info("Testing model with best validation F1...")
     model.load_state_dict(torch.load(best_f1_checkpoint_path, map_location=device))
@@ -451,7 +453,6 @@ if __name__ == "__main__":
     logging.info("Testing completed.")
     with open(join(checkpoint_dir, "test_statistics_best_val_f1.json"), "w") as wfi:
         json.dump(test_stats, wfi, indent=4)
-    
     
     logging.info("Testing model with best validation loss...")
     model.load_state_dict(torch.load(best_loss_checkpoint_path, map_location=device))
