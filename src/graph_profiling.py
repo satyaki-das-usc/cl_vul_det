@@ -1,9 +1,18 @@
 import torch
 import numpy as np
+
+from typing import cast
+from omegaconf import DictConfig, OmegaConf
+from os.path import join
+
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
+
 from collections import defaultdict
 import matplotlib.pyplot as plt
+
+from src.torch_data.datamodules import SliceDataModule
+from src.vocabulary import Vocabulary
 
 class GraphMemoryProfiler:
     """Profile memory usage of individual graphs and batches."""
@@ -200,8 +209,15 @@ if __name__ == "__main__":
     # Assuming you have a dataset of Data objects
     # dataset = [Data(...), Data(...), ...]
     
+    config = cast(DictConfig, OmegaConf.load("configs/dwk.yaml"))
+
+    dataset_root = join(config.data_folder, config.dataset.name)
+    
+    vocab = Vocabulary.from_w2v(join(dataset_root, "w2v.wv"))
+    vocab_size = vocab.get_vocab_size()
+    data_module = SliceDataModule(config, vocab, config.hyper_parameters.batch_sizes[0], train_sampler=None, use_temp_data=False)
     # 1. Profile your graphs
-    profiler = GraphMemoryProfiler(dataset)
+    profiler = GraphMemoryProfiler(data_module.get_train_dataset())
     stats = profiler.compute_graph_metrics()
     outliers = profiler.identify_outliers(threshold_percentile=95)
     profiler.plot_distribution()
