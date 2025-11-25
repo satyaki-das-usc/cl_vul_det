@@ -61,6 +61,9 @@ class SliceDataModule(LightningDataModule):
         if self.__test_dataset is not None:
             info['test'] = self.__test_dataset.get_cache_info()
         return info
+
+    def get_train_dataset(self) -> Dataset:
+        return self.__train_dataset
     
     def train_dataloader(self) -> DataLoader:
         # if self.__config.dataset.name == "BigVul":
