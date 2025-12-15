@@ -63,6 +63,9 @@ class SliceDataModule(LightningDataModule):
         return info
 
     def get_train_dataset(self) -> Dataset:
+        if self.__train_dataset is None:
+            train_dataset_path = join(self.__dataset_root, self.__config.train_slices_filename)
+            self.__train_dataset = self.__create_dataset(train_dataset_path)
         return self.__train_dataset
     
     def train_dataloader(self) -> DataLoader:

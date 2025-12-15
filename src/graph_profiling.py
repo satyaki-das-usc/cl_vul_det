@@ -1,9 +1,14 @@
 import torch
+import json
+import os
 import numpy as np
 
 from typing import cast
 from omegaconf import DictConfig, OmegaConf
 from os.path import join
+from tqdm import tqdm
+
+from multiprocessing import Pool, cpu_count
 
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
@@ -14,31 +19,70 @@ import matplotlib.pyplot as plt
 from src.torch_data.datamodules import SliceDataModule
 from src.vocabulary import Vocabulary
 
+def _compute_single_graph_stats(args):
+    """Helper function to compute stats for a single graph (must be top-level for pickling)."""
+    idx, data = args
+    
+    stats = {
+        'idx': idx,
+        'num_nodes': data.graph.num_nodes,
+        'num_edges': data.graph.num_edges if hasattr(data.graph, 'num_edges') else data.graph.edge_index.size(1),
+        'node_features': data.graph.x.numel() if hasattr(data.graph, 'x') else 0,
+        'edge_features': data.graph.edge_attr.numel() if hasattr(data.graph, 'edge_attr') else 0,
+    }
+    
+    # Estimate memory footprint (in MB)
+    total_elements = stats['node_features'] + stats['edge_features']
+    stats['estimated_memory_mb'] = (total_elements * 4) / (1024 ** 2)  # 4 bytes per float32
+    
+    with open(os.path.join("data/ReposVul/graph_stats", f"{idx}.json"), "w") as wfo:
+        json.dump(stats, wfo, indent=4)
+
 class GraphMemoryProfiler:
     """Profile memory usage of individual graphs and batches."""
     
-    def __init__(self, dataset):
+    def __init__(self, dataset, num_workers=None):
         self.dataset = dataset
         self.graph_stats = []
+        self.num_workers = num_workers if num_workers else cpu_count()
         
     def compute_graph_metrics(self):
-        """Compute memory-related metrics for each graph."""
-        for idx, data in enumerate(self.dataset):
-            stats = {
-                'idx': idx,
-                'num_nodes': data.num_nodes,
-                'num_edges': data.num_edges if hasattr(data, 'num_edges') else data.edge_index.size(1),
-                'node_features': data.x.numel() if hasattr(data, 'x') else 0,
-                'edge_features': data.edge_attr.numel() if hasattr(data, 'edge_attr') else 0,
-            }
-            
-            # Estimate memory footprint (in MB)
-            total_elements = stats['node_features'] + stats['edge_features']
-            stats['estimated_memory_mb'] = (total_elements * 4) / (1024 ** 2)  # 4 bytes per float32
-            
-            self.graph_stats.append(stats)
+        """Compute memory-related metrics for each graph (parallelized)."""
+        print(f"Computing graph metrics using {self.num_workers} workers...")
+
+        if not os.path.exists("data/ReposVul/graph_stats"):
+            os.makedirs("data/ReposVul/graph_stats")
+
+        # Use multiprocessing Pool
+        with Pool(processes=self.num_workers) as pool:
+            # Use imap for progress bar support - consume iterator to execute all tasks
+            for _ in tqdm(
+                pool.imap_unordered(_compute_single_graph_stats, enumerate(self.dataset)),
+                total=len(self.dataset),
+                desc="Processing graphs"
+            ):
+                pass
         
-        return self.graph_stats
+        return None  # Individual stats are saved as separate files
+        # for idx, data in enumerate(tqdm(self.dataset)):
+        #     stats = {
+        #         'idx': idx,
+        #         'num_nodes': data.graph.num_nodes,
+        #         'num_edges': data.graph.num_edges if hasattr(data.graph, 'num_edges') else data.graph.edge_index.size(1),
+        #         'node_features': data.graph.x.numel() if hasattr(data.graph, 'x') else 0,
+        #         'edge_features': data.graph.edge_attr.numel() if hasattr(data.graph, 'edge_attr') else 0,
+        #     }
+            
+        #     # Estimate memory footprint (in MB)
+        #     total_elements = stats['node_features'] + stats['edge_features']
+        #     stats['estimated_memory_mb'] = (total_elements * 4) / (1024 ** 2)  # 4 bytes per float32
+            
+        #     self.graph_stats.append(stats)
+        
+        # with open("data/ReposVul/graph_stats.json", "w") as wfo:
+        #     json.dump(self.graph_stats, wfo, indent=4)
+            
+        # return self.graph_stats
     
     def identify_outliers(self, metric='estimated_memory_mb', threshold_percentile=95):
         """Identify graphs that are unusually large."""
@@ -219,6 +263,7 @@ if __name__ == "__main__":
     # 1. Profile your graphs
     profiler = GraphMemoryProfiler(data_module.get_train_dataset())
     stats = profiler.compute_graph_metrics()
+    exit(0)
     outliers = profiler.identify_outliers(threshold_percentile=95)
     profiler.plot_distribution()
     
@@ -227,7 +272,7 @@ if __name__ == "__main__":
     
     # In your training loop:
     # for epoch in range(num_epochs):
-    #     for batch_idx, batch in enumerate(train_loader):
+    #     for batch_idx, batch in enumerate(tqdm(train_loader)):
     #         # Before forward pass
     #         if torch.cuda.is_available():
     #             torch.cuda.reset_peak_memory_stats()
