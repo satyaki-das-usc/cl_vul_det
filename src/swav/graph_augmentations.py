@@ -248,69 +248,16 @@ def generate_edge_set_augmentation(slice_graph: nx.DiGraph, vocab: Vocabulary, m
 
 def generate_SF_augmentations(batched_graph: SliceGraphBatch, vocab: Vocabulary, max_len: int):
     # Apply augmentations to the input graph
-    views = []
     glob1_views = []
     glob2_views = []
-    control_edges_views = []
-    dd_edges_views = []
-    post_dom_edges_views = []
 
     slice_graph_list = [get_slice_graph(slice_path) for slice_path in batched_graph.slice_paths]
 
     for slice_graph in slice_graph_list:
-        glob1_views.append(generate_node_set_augmentation(slice_graph, vocab, max_len))
-        glob2_views.append(generate_edge_set_augmentation(slice_graph, vocab, max_len))
+        glob1_views.append(generate_node_set_augmentation(slice_graph, vocab, max_len).to_torch_graph(vocab, max_len))
+        glob2_views.append(generate_edge_set_augmentation(slice_graph, vocab, max_len).to_torch_graph(vocab, max_len))
 
-        control_edges = []
-        dd_edges = []
-        post_dom_edges = []
-
-        for u, v, edge_data in slice_graph.edges(data=True):
-            if edge_data["label"] == "CONTROLS":
-                control_edges.append((u, v, edge_data))
-            elif edge_data["label"] == "REACHES":
-                dd_edges.append((u, v, edge_data))
-            # elif edge_data["label"] == "POST_DOM":
-            #     post_dom_edges.append((u, v, edge_data))
-
-        # if len(control_edges) > 0:
-        control_edge_view = deepcopy(slice_graph)
-        control_edge_view.remove_edges_from(dd_edges + post_dom_edges)
-        isolated = [n for n in control_edge_view.nodes() if control_edge_view.degree(n) == 0]
-        if control_edge_view.number_of_nodes() > len(isolated):
-            control_edge_view.remove_nodes_from(isolated)
-        control_edge_view = SliceGraph(slice_graph=control_edge_view)
-        control_edge_view = SliceGraphSample(graph=control_edge_view.to_torch_graph(vocab, max_len),
-                            label=control_edge_view.label, slice_path=None)
-        control_edges_views.append(control_edge_view)
-        
-        # if len(dd_edges) > 0:
-        dd_edge_view = deepcopy(slice_graph)
-        dd_edge_view.remove_edges_from(control_edges + post_dom_edges)
-        isolated = [n for n in dd_edge_view.nodes() if dd_edge_view.degree(n) == 0]
-        if dd_edge_view.number_of_nodes() > len(isolated):
-            dd_edge_view.remove_nodes_from(isolated)
-        dd_edge_view = SliceGraph(slice_graph=dd_edge_view)
-        dd_edge_view = SliceGraphSample(graph=dd_edge_view.to_torch_graph(vocab, max_len),
-                            label=dd_edge_view.label, slice_path=None)
-        dd_edges_views.append(dd_edge_view)
-        
-        # if len(post_dom_edges) > 0:
-        post_dom_edge_view = deepcopy(slice_graph)
-        post_dom_edge_view.remove_edges_from(control_edges + dd_edges)
-        isolated = [n for n in post_dom_edge_view.nodes() if post_dom_edge_view.degree(n) == 0]
-        post_dom_edge_view.remove_nodes_from(isolated)
-        post_dom_edge_view = SliceGraph(None, post_dom_edge_view)
-        post_dom_edge_view = SliceGraphSample(graph=post_dom_edge_view.to_torch_graph(vocab, max_len),
-                            label=post_dom_edge_view.label, slice_path=None)
-        post_dom_edges_views.append(post_dom_edge_view)
-
-    views.append(SliceGraphBatch(glob1_views))
-    views.append(SliceGraphBatch(glob2_views))
-    views.append(SliceGraphBatch(control_edges_views))
-    views.append(SliceGraphBatch(dd_edges_views))
-
-    return views
+    return [Batch.from_data_list(glob1_views), Batch.from_data_list(glob2_views)]
 
 if __name__ == "__main__":
     pass

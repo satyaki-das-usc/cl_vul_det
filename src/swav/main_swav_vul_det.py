@@ -129,16 +129,22 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         _, _, graph_encodings, _, output = zip(*(model(inp.to(device)) for inp in inputs))
 
         swav_loss = 0
-        for view_id in config.swav.views_for_assign:
+        num_views = len(output)
+        if num_views < 2:
+            raise ValueError(f"SwAV loss requires at least 2 augmented views, got {num_views}.")
+        views_for_assign = [view_id for view_id in config.swav.views_for_assign if view_id < num_views]
+        if not views_for_assign:
+            raise ValueError(f"No valid SwAV assignment views for {num_views} augmented views.")
+        for view_id in views_for_assign:
             with torch.no_grad():
                 out = output[view_id].detach()
                 q = assignment_functions[config.swav.assignment_protocol](out)
             subloss = 0
-            for v in np.delete(np.arange(np.sum(config.swav.nmb_views)), view_id):
+            for v in np.delete(np.arange(num_views), view_id):
                 x = output[v] / config.swav.temperature
                 subloss -= torch.mean(torch.sum(q * F.log_softmax(x, dim=-1), dim=-1))
-            swav_loss += subloss / (np.sum(config.swav.nmb_views) - 1)
-        swav_loss /= len(config.swav.views_for_assign)
+            swav_loss += subloss / (num_views - 1)
+        swav_loss /= len(views_for_assign)
         epoch_swav_losses.append(swav_loss.item())
 
         if config.swav.contrastive.criterion == "info_nce":
