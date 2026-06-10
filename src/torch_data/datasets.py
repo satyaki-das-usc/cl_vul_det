@@ -13,13 +13,10 @@ from torch.utils.data import Dataset
 from src.vocabulary import Vocabulary
 from src.torch_data.graphs import SliceGraph
 from src.torch_data.samples import SliceGraphSample
-from src.swav.graph_augmentations import generate_node_set_augmentation, generate_edge_set_augmentation
+from src.swav.graph_augmentations import generate_template_augmentations
 
 def generate_SF_augmentations_per_sample(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int):
-    glob1_view = generate_node_set_augmentation(slice_graph, vocab, max_len).to_torch_graph(vocab, max_len)
-    glob2_view = generate_edge_set_augmentation(slice_graph, vocab, max_len).to_torch_graph(vocab, max_len)
-
-    return [glob1_view, glob2_view]
+    return generate_template_augmentations(slice_graph, vocab, max_len, n_views=2)
 
 class SliceDataset(Dataset):
     def __init__(self, slices_paths: str, config: DictConfig, vocab: Vocabulary, cache_size: int = 128) -> None:

@@ -4,7 +4,7 @@ import random
 import networkx as nx
 import wordninja as wn
 
-from typing import List
+from typing import Callable, List
 from copy import deepcopy
 
 from torch_geometric.data import Batch, Data
@@ -12,7 +12,7 @@ from torch_geometric.utils import dropout_node, dropout_edge, k_hop_subgraph
 
 from src.vocabulary import Vocabulary
 from src.torch_data.graphs import SliceGraph
-from src.torch_data.samples import SliceGraphSample, SliceGraphBatch
+from src.torch_data.samples import SliceGraphBatch
 
 operators3 = {'<<=', '>>='}
 operators2 = {
@@ -26,6 +26,9 @@ operators1 = {
 
 global_augmentation1 = "printf("");\n"
 global_augmentation2 = ["if(0 == 1)", "return;\n"]
+dead_branch_conditions = ["if(0)", "if(1 == 0)", "if(false)"]
+dead_loop_conditions = ["while(0)", "while(false)", "for(; 0; )"]
+dead_body_statements = [";", "0;"]
 
 def random_node_drop(batch: Batch, p: float = 0.1) -> Batch:
     """
@@ -188,43 +191,51 @@ def get_slice_graph(slice_path: str) -> nx.DiGraph:
             slice_graph: nx.DiGraph = pickle.load(rbfi)
     return slice_graph
 
-def generate_node_set_augmentation(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int) -> SliceGraphSample:
-    # Create a copy of the original graph
-    augmented_graph = deepcopy(slice_graph)
-    aug_node = f"glob_aug"
-    augmented_graph.add_node(aug_node)
-    augmented_graph.nodes[aug_node]["sym_code"] = global_augmentation1
-    augmented_graph.nodes[aug_node]["code_sym_token"] = tokenize_code_line(global_augmentation1, subtoken=False)
-    
-    augmented_graph = SliceGraph(slice_graph=augmented_graph)
-    return augmented_graph
-    augmented_graph = SliceGraphSample(graph=augmented_graph.to_torch_graph(vocab, max_len),
-                        label=augmented_graph.label, slice_path=None)
-    return augmented_graph
+def _fresh_aug_node_name(graph: nx.DiGraph, prefix: str) -> str:
+    idx = 0
+    node_name = f"{prefix}_{idx}"
+    while node_name in graph:
+        idx += 1
+        node_name = f"{prefix}_{idx}"
+    return node_name
 
+def _choose_code_variant(candidates: List[str], vocab: Vocabulary):
+    tokenized_candidates = [
+        (candidate, tokenize_code_line(candidate, subtoken=False))
+        for candidate in candidates
+    ]
+    in_vocab_candidates = [
+        (candidate, tokens)
+        for candidate, tokens in tokenized_candidates
+        if all(token in vocab.token_to_id for token in tokens)
+    ]
+    return random.choice(in_vocab_candidates or tokenized_candidates)
 
-def generate_edge_set_augmentation(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int) -> SliceGraphSample:
-    # Create a copy of the original graph
+def _add_symbolized_node(graph: nx.DiGraph, node_name: str, sym_code: str, tokens: List[str] = None):
+    graph.add_node(node_name)
+    graph.nodes[node_name]["sym_code"] = sym_code
+    graph.nodes[node_name]["code_sym_token"] = tokens or tokenize_code_line(sym_code, subtoken=False)
+
+def apply_printf_template(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int) -> SliceGraph:
     augmented_graph = deepcopy(slice_graph)
-    cond_node = f"cond_aug"
-    augmented_graph.add_node(cond_node)
-    augmented_graph.nodes[cond_node]["sym_code"] = global_augmentation2[0]
-    augmented_graph.nodes[cond_node]["code_sym_token"] = tokenize_code_line(global_augmentation2[0], subtoken=False)
-    stmt_node = f"stmt_node"
-    augmented_graph.add_node(stmt_node)
-    augmented_graph.nodes[stmt_node]["sym_code"] = global_augmentation2[1]
-    augmented_graph.nodes[stmt_node]["code_sym_token"] = tokenize_code_line(global_augmentation2[1], subtoken=False)
+    aug_node = _fresh_aug_node_name(augmented_graph, "printf_aug")
+    _add_symbolized_node(augmented_graph, aug_node, global_augmentation1)
+    return SliceGraph(slice_graph=augmented_graph)
+
+def apply_unreachable_return_template(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int) -> SliceGraph:
+    augmented_graph = deepcopy(slice_graph)
+    cond_node = _fresh_aug_node_name(augmented_graph, "unreachable_cond_aug")
+    stmt_node = _fresh_aug_node_name(augmented_graph, "unreachable_stmt_aug")
+    _add_symbolized_node(augmented_graph, cond_node, global_augmentation2[0])
+    _add_symbolized_node(augmented_graph, stmt_node, global_augmentation2[1])
     all_nodes = list(slice_graph.nodes())
-    controlled_nodes = set()
-    controlled_nodes.add(stmt_node)
+    controlled_nodes = {stmt_node}
     insert_point = None
     if random.choice([True, False]) and len(all_nodes) > 0:
         insert_point = random.choice(all_nodes)
     if insert_point is not None:
-        forward_queue = []
-        visited = set()
-        forward_queue.append(insert_point)
-        visited.add(insert_point)
+        forward_queue = [insert_point]
+        visited = {insert_point}
 
         while len(forward_queue) > 0:
             current_line = forward_queue.pop(0)
@@ -239,25 +250,68 @@ def generate_edge_set_augmentation(slice_graph: nx.DiGraph, vocab: Vocabulary, m
 
     new_edges = [(cond_node, n, {"label": "CONTROLS", "direction": "forward"}) for n in controlled_nodes]
     augmented_graph.add_edges_from(new_edges)
-    augmented_graph = SliceGraph(slice_graph=augmented_graph)
-    return augmented_graph
-    augmented_graph = SliceGraphSample(graph=augmented_graph.to_torch_graph(vocab, max_len),
-                        label=augmented_graph.label, slice_path=None)
+    return SliceGraph(slice_graph=augmented_graph)
 
-    return augmented_graph
+def apply_dead_branch_template(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int) -> SliceGraph:
+    augmented_graph = deepcopy(slice_graph)
+    cond_code, cond_tokens = _choose_code_variant(dead_branch_conditions, vocab)
+    body_code, body_tokens = _choose_code_variant(dead_body_statements, vocab)
+    cond_node = _fresh_aug_node_name(augmented_graph, "dead_branch_cond_aug")
+    body_node = _fresh_aug_node_name(augmented_graph, "dead_branch_body_aug")
+    _add_symbolized_node(augmented_graph, cond_node, cond_code, cond_tokens)
+    _add_symbolized_node(augmented_graph, body_node, body_code, body_tokens)
+    augmented_graph.add_edge(cond_node, body_node, label="CONTROLS", direction="forward")
+    return SliceGraph(slice_graph=augmented_graph)
+
+def apply_dead_loop_template(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int) -> SliceGraph:
+    augmented_graph = deepcopy(slice_graph)
+    loop_code, loop_tokens = _choose_code_variant(dead_loop_conditions, vocab)
+    body_code, body_tokens = _choose_code_variant(dead_body_statements, vocab)
+    loop_node = _fresh_aug_node_name(augmented_graph, "dead_loop_cond_aug")
+    body_node = _fresh_aug_node_name(augmented_graph, "dead_loop_body_aug")
+    _add_symbolized_node(augmented_graph, loop_node, loop_code, loop_tokens)
+    _add_symbolized_node(augmented_graph, body_node, body_code, body_tokens)
+    augmented_graph.add_edge(loop_node, body_node, label="CONTROLS", direction="forward")
+    return SliceGraph(slice_graph=augmented_graph)
+
+augmentation_templates: List[Callable[[nx.DiGraph, Vocabulary, int], SliceGraph]] = [
+    apply_printf_template,
+    apply_unreachable_return_template,
+    apply_dead_branch_template,
+    apply_dead_loop_template,
+]
+
+def generate_node_set_augmentation(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int) -> SliceGraph:
+    return apply_printf_template(slice_graph, vocab, max_len)
+
+def generate_edge_set_augmentation(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int) -> SliceGraph:
+    return apply_unreachable_return_template(slice_graph, vocab, max_len)
+
+def generate_template_augmentations(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int, n_views: int = 2):
+    if n_views <= len(augmentation_templates):
+        selected_templates = random.sample(augmentation_templates, k=n_views)
+    else:
+        selected_templates = [
+            random.choice(augmentation_templates)
+            for _ in range(n_views)
+        ]
+    return [
+        template(slice_graph, vocab, max_len).to_torch_graph(vocab, max_len)
+        for template in selected_templates
+    ]
 
 def generate_SF_augmentations(batched_graph: SliceGraphBatch, vocab: Vocabulary, max_len: int):
     # Apply augmentations to the input graph
-    glob1_views = []
-    glob2_views = []
+    view_lists = [[], []]
 
     slice_graph_list = [get_slice_graph(slice_path) for slice_path in batched_graph.slice_paths]
 
     for slice_graph in slice_graph_list:
-        glob1_views.append(generate_node_set_augmentation(slice_graph, vocab, max_len).to_torch_graph(vocab, max_len))
-        glob2_views.append(generate_edge_set_augmentation(slice_graph, vocab, max_len).to_torch_graph(vocab, max_len))
+        views = generate_template_augmentations(slice_graph, vocab, max_len, n_views=len(view_lists))
+        for idx, view in enumerate(views):
+            view_lists[idx].append(view)
 
-    return [Batch.from_data_list(glob1_views), Batch.from_data_list(glob2_views)]
+    return [Batch.from_data_list(view_list) for view_list in view_lists]
 
 if __name__ == "__main__":
     pass
