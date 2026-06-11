@@ -319,6 +319,13 @@ def build_CPG(code_path: str,
     # CPG.add_edges_from(post_dom_edges)
     # CPG.add_edges_from(def_use_edges)
 
+    for line_no in array_lines:
+        if CPG.has_node(line_no):
+            CPG.nodes[line_no]["is_array_indexing"] = True
+    for line_no in arithmatic_lines:
+        if CPG.has_node(line_no):
+            CPG.nodes[line_no]["is_arithmetic_op"] = True
+
     # CPG = remove_static_control_dependency(remove_dependency_free_node(CPG), nodes)
 
     # CPG.remove_edges_from(def_use_edges)

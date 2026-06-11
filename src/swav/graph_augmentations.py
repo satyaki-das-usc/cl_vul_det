@@ -4,7 +4,7 @@ import random
 import networkx as nx
 import wordninja as wn
 
-from typing import Callable, List
+from typing import Callable, List, Optional, Tuple
 from copy import deepcopy
 
 from torch_geometric.data import Batch, Data
@@ -29,6 +29,7 @@ global_augmentation2 = ["if(0 == 1)", "return;\n"]
 dead_branch_conditions = ["if(0)", "if(1 == 0)", "if(false)"]
 dead_loop_conditions = ["while(0)", "while(false)", "for(; 0; )"]
 dead_body_statements = [";", "0;"]
+arithmetic_operator_tokens = {"+", "-", "*", "/", "%", "<<", ">>", "+=", "-=", "*=", "/=", "%="}
 
 def random_node_drop(batch: Batch, p: float = 0.1) -> Batch:
     """
@@ -216,6 +217,43 @@ def _add_symbolized_node(graph: nx.DiGraph, node_name: str, sym_code: str, token
     graph.nodes[node_name]["sym_code"] = sym_code
     graph.nodes[node_name]["code_sym_token"] = tokens or tokenize_code_line(sym_code, subtoken=False)
 
+def _is_array_or_arithmetic_node(node_data: dict) -> bool:
+    if node_data.get("is_array_indexing") or node_data.get("is_arithmetic_op"):
+        return True
+
+    tokens = node_data.get("code_sym_token", [])
+    token_set = set(tokens)
+    return (
+        ("[" in token_set and "]" in token_set)
+        or any(token in arithmetic_operator_tokens for token in tokens)
+    )
+
+def _get_candidate_data_edges(slice_graph: nx.DiGraph, vocab: Vocabulary) -> List[Tuple[object, object, str, str]]:
+    candidate_edges = []
+    for target_node, node_data in slice_graph.nodes(data=True):
+        if not _is_array_or_arithmetic_node(node_data):
+            continue
+        node_tokens = set(node_data.get("code_sym_token", []))
+        for source_node, _, edge_data in slice_graph.in_edges(target_node, data=True):
+            if edge_data.get("label") != "REACHES":
+                continue
+            edge_var = edge_data.get("var").strip()
+            if edge_var not in vocab.token_to_id or edge_var not in node_tokens:
+                continue
+            candidate_edges.append((
+                source_node,
+                target_node,
+                edge_var,
+                edge_data.get("direction", "forward")
+            ))
+    return candidate_edges
+
+def _sample_candidate_data_edge(slice_graph: nx.DiGraph, vocab: Vocabulary) -> Optional[Tuple[object, object, str, str]]:
+    candidate_edges = _get_candidate_data_edges(slice_graph, vocab)
+    if not candidate_edges:
+        return None
+    return random.choice(candidate_edges)
+
 def apply_printf_template(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int) -> SliceGraph:
     augmented_graph = deepcopy(slice_graph)
     aug_node = _fresh_aug_node_name(augmented_graph, "printf_aug")
@@ -274,11 +312,63 @@ def apply_dead_loop_template(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len
     augmented_graph.add_edge(loop_node, body_node, label="CONTROLS", direction="forward")
     return SliceGraph(slice_graph=augmented_graph)
 
+def _apply_no_data_fallback_template(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int) -> SliceGraph:
+    fallback_templates = [
+        apply_printf_template,
+        apply_unreachable_return_template,
+        apply_dead_branch_template,
+        apply_dead_loop_template,
+    ]
+    return random.choice(fallback_templates)(slice_graph, vocab, max_len)
+
+def apply_data_printf_template(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int) -> SliceGraph:
+    sampled_edge = _sample_candidate_data_edge(slice_graph, vocab)
+    if sampled_edge is None:
+        return _apply_no_data_fallback_template(slice_graph, vocab, max_len)
+
+    source_node, _, edge_var, edge_direction = sampled_edge
+    augmented_graph = deepcopy(slice_graph)
+    printf_node = _fresh_aug_node_name(augmented_graph, "data_printf_aug")
+    printf_code = f'printf("%d\\n", {edge_var});'
+    _add_symbolized_node(augmented_graph, printf_node, printf_code)
+    augmented_graph.add_edge(
+        source_node,
+        printf_node,
+        label="REACHES",
+        var=edge_var,
+        direction=edge_direction
+    )
+    return SliceGraph(slice_graph=augmented_graph)
+
+def apply_data_noop_update_template(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int) -> SliceGraph:
+    sampled_edge = _sample_candidate_data_edge(slice_graph, vocab)
+    if sampled_edge is None:
+        return _apply_no_data_fallback_template(slice_graph, vocab, max_len)
+
+    source_node, _, edge_var, edge_direction = sampled_edge
+    augmented_graph = deepcopy(slice_graph)
+    noop_node = _fresh_aug_node_name(augmented_graph, "data_noop_update_aug")
+    noop_code, noop_tokens = _choose_code_variant([
+        f"{edge_var} += 0;",
+        f"{edge_var} = {edge_var} + 0;",
+    ], vocab)
+    _add_symbolized_node(augmented_graph, noop_node, noop_code, noop_tokens)
+    augmented_graph.add_edge(
+        source_node,
+        noop_node,
+        label="REACHES",
+        var=edge_var,
+        direction=edge_direction
+    )
+    return SliceGraph(slice_graph=augmented_graph)
+
 augmentation_templates: List[Callable[[nx.DiGraph, Vocabulary, int], SliceGraph]] = [
     apply_printf_template,
     apply_unreachable_return_template,
     apply_dead_branch_template,
     apply_dead_loop_template,
+    apply_data_printf_template,
+    apply_data_noop_update_template,
 ]
 
 def generate_node_set_augmentation(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int) -> SliceGraph:
