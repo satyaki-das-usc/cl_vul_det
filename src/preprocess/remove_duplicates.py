@@ -9,7 +9,7 @@ import logging
 from multiprocessing import Manager, Pool, Queue, cpu_count
 from os.path import join, splitext, basename
 from omegaconf import DictConfig, OmegaConf
-from typing import List, cast
+from typing import List, cast, Dict
 
 from tqdm import tqdm
 
@@ -20,49 +20,39 @@ file_slices = dict()
 def process_file_parallel(cpp_path, queue: Queue):
     try:
         all_slices = file_slices[cpp_path]
-        vul_slice_list = []
-        nonvul_slice_list = []
+        unique_vul_slice_set = set()
+        unique_vul_slice_list = []
+        unique_nonvul_slice_by_code: Dict[str, str] = {}
 
         for slice_path in all_slices:
             with open(slice_path, "rb") as rbfi:
                 slice_graph: nx.DiGraph = pickle.load(rbfi)
+
+            slice_sym_code = slice_graph.graph["slice_sym_code"]
             if slice_graph.graph["label"]:
-                vul_slice_list.append((slice_path, slice_graph))
+                if slice_sym_code not in unique_vul_slice_set:
+                    unique_vul_slice_set.add(slice_sym_code)
+                    unique_vul_slice_list.append(slice_path)
+                else:
+                    with open("duplicate_slices.txt", "a") as afi:
+                        afi.write(f"{slice_path}\n")
             else:
-                nonvul_slice_list.append((slice_path, slice_graph))
-        
-        unique_vul_slice_set = set()
-        unique_vul_slice_list = []
-        for entry in vul_slice_list:
-            slice_path, slice_graph = entry
-            if slice_graph.graph["slice_sym_code"] not in unique_vul_slice_set:
-                unique_vul_slice_set.add(slice_graph.graph["slice_sym_code"])
-                unique_vul_slice_list.append((slice_path, slice_graph))
-            else:
-                with open("duplicate_slices.txt", "a") as afi:
-                    afi.write(f"{slice_path}\n")
-        
-        unique_nonvul_slice_set = set()
-        unique_nonvul_slice_list = []
-        for entry in nonvul_slice_list:
-            slice_path, slice_graph = entry
-            if slice_graph.graph["slice_sym_code"] not in unique_nonvul_slice_set:
-                unique_nonvul_slice_set.add(slice_graph.graph["slice_sym_code"])
-                unique_nonvul_slice_list.append((slice_path, slice_graph))
-            else:
-                with open("duplicate_slices.txt", "a") as afi:
-                    afi.write(f"{slice_path}\n")
-        
+                if slice_sym_code not in unique_nonvul_slice_by_code:
+                    unique_nonvul_slice_by_code[slice_sym_code] = slice_path
+                else:
+                    with open("duplicate_slices.txt", "a") as afi:
+                        afi.write(f"{slice_path}\n")
+
         final_unique_nonvul_slice_list = []
-        for entry in unique_nonvul_slice_list:
-            slice_path, slice_graph = entry
-            if slice_graph.graph["slice_sym_code"] not in unique_vul_slice_set:
-                final_unique_nonvul_slice_list.append((slice_path, slice_graph))
+        for slice_sym_code, slice_path in unique_nonvul_slice_by_code.items():
+            if slice_sym_code not in unique_vul_slice_set:
+                final_unique_nonvul_slice_list.append(slice_path)
             else:
                 with open("duplicate_slices.txt", "a") as afi:
                     afi.write(f"{slice_path}\n")
-        
-        return [entry[0] for entry in unique_vul_slice_list + final_unique_nonvul_slice_list]
+
+        return unique_vul_slice_list + final_unique_nonvul_slice_list
+
     except Exception as e:
         logging.error(cpp_path)
         raise e
