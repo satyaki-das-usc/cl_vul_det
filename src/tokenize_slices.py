@@ -30,7 +30,7 @@ def process_slice_parallel(slice_path, queue: Queue):
             slice_graph: nx.DiGraph = pickle.load(rbfi)
     
         if code_sym_token_exists(slice_graph):
-            return slice_graph
+            return slice_path
         
         src_cpp_path = join(slice_path.partition(config.slice_folder)[0], config.source_root_folder, slice_graph.graph["file_paths"][0])
         with open(src_cpp_path, "r") as rfi:
@@ -40,10 +40,10 @@ def process_slice_parallel(slice_path, queue: Queue):
         tokenized_slice = tokenizer.tokenize_slice()
 
         if len(tokenized_slice.nodes) == 0:
-            os.system(f"rm {slice_path}")
+            os.remove(slice_path)
             return ""
         if len(tokenized_slice.edges) == 0:
-            os.system(f"rm {slice_path}")
+            os.remove(slice_path)
             return ""
         with open(slice_path, "wb") as wbfi:
             pickle.dump(tokenized_slice, wbfi, pickle.HIGHEST_PROTOCOL)
