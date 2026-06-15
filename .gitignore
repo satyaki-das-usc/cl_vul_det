@@ -15,3 +15,6 @@ saved_models/
 *.pyc
 *.zip
 *.tar.gz
+
+!data/sensi_api_map.json
+!data/sensi_api.json
