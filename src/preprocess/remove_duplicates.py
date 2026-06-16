@@ -106,6 +106,11 @@ if __name__ == "__main__":
             file_unique_slices = process_file_parallel(cpp_path, queue=None)
             unique_slice_list.extend(file_unique_slices)
     
+    with open("duplicate_slices.txt", "r") as f:
+        duplicate_slices = f.readlines()
+    duplicate_slices = set([slice.strip() for slice in duplicate_slices])
+    unique_slice_list = list(set(unique_slice_list) - duplicate_slices)
+    
     logging.info(f"Total unique slices: {len(unique_slice_list)}")
     all_slices_filepath = join(dataset_root, config.all_slices_filename)
     logging.info(f"Saving unique slices to {all_slices_filepath}...")
