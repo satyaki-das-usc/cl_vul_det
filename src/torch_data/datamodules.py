@@ -23,6 +23,7 @@ class SliceDataModule(LightningDataModule):
         self.__train_dataset = None
         self.__val_dataset = None
         self.__test_dataset = None
+        self.__train_loader = None
 
         if self.__config.num_workers != -1:
             self.__n_workers = min(self.__config.num_workers, cpu_count())
@@ -39,8 +40,21 @@ class SliceDataModule(LightningDataModule):
     
     def __create_dataset(self, data_path: str) -> Dataset:
         return SliceDataset(data_path, self.__config, self.__vocab, cache_size=self.__train_batch_size)
+
+    def __dataloader_kwargs(self):
+        kwargs = {
+            "num_workers": self.__n_workers,
+            "collate_fn": self.collate_wrapper,
+            "pin_memory": torch.cuda.is_available(),
+            "persistent_workers": self.__n_workers > 0,
+        }
+        if self.__n_workers > 0:
+            kwargs["prefetch_factor"] = 2
+        return kwargs
     
     def set_train_batch_size(self, batch_size: int):
+        if batch_size != self.__train_batch_size:
+            self.__train_loader = None
         self.__train_batch_size = batch_size
 
     def clear_cache(self):
@@ -72,28 +86,26 @@ class SliceDataModule(LightningDataModule):
         # if self.__config.dataset.name == "BigVul":
         #     train_dataset_path = join(self.__dataset_root, f"{self.__config.dataset.version}_{self.__config.train_slices_filename}")
         # else:
-        train_dataset_path = join(self.__dataset_root, self.__config.train_slices_filename)
-        self.__train_dataset = self.__create_dataset(train_dataset_path)
+        if self.__train_loader is not None:
+            return self.__train_loader
+
+        self.__train_dataset = self.get_train_dataset()
 
         if self.__train_sampler:
-            return DataLoader(
+            self.__train_loader = DataLoader(
                 self.__train_dataset,
                 batch_size=self.__train_batch_size,
                 sampler=self.__train_sampler,
-                num_workers=self.__n_workers,
-                collate_fn=self.collate_wrapper,
-                pin_memory=False,
-                persistent_workers=False
+                **self.__dataloader_kwargs()
             )
-        return DataLoader(
+            return self.__train_loader
+        self.__train_loader = DataLoader(
             self.__train_dataset,
             batch_size=self.__train_batch_size,
             shuffle=True,
-            num_workers=self.__n_workers,
-            collate_fn=self.collate_wrapper,
-            pin_memory=False,
-            persistent_workers=False
+            **self.__dataloader_kwargs()
         )
+        return self.__train_loader
 
     def val_dataloader(self) -> DataLoader:
         # if self.__config.dataset.name == "BigVul":
@@ -105,10 +117,7 @@ class SliceDataModule(LightningDataModule):
             self.__val_dataset,
             batch_size=self.__config.hyper_parameters.test_batch_size,
             shuffle=False,
-            num_workers=self.__n_workers,
-            collate_fn=self.collate_wrapper,
-            pin_memory=False,
-            persistent_workers=False
+            **self.__dataloader_kwargs()
         )
 
     def test_dataloader(self) -> DataLoader:
@@ -121,10 +130,7 @@ class SliceDataModule(LightningDataModule):
             self.__test_dataset,
             batch_size=self.__config.hyper_parameters.test_batch_size,
             shuffle=False,
-            num_workers=self.__n_workers,
-            collate_fn=self.collate_wrapper,
-            pin_memory=False,
-            persistent_workers=False
+            **self.__dataloader_kwargs()
         )
     
     def transfer_batch_to_device(

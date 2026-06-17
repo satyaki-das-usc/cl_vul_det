@@ -103,8 +103,8 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
             w = F.normalize(w, dim=1, p=2)
             model.swav_prototypes.weight.copy_(w)
         
-        labels = batched_graph.labels.to(device)
-        graphs = batched_graph.graphs.to(device)
+        labels = batched_graph.labels.to(device, non_blocking=True)
+        graphs = batched_graph.graphs.to(device, non_blocking=True)
         logits, activations, anchor_graph_encodings, _, _ = model(graphs)
         
         ce_loss = F.cross_entropy(logits, labels)
@@ -126,7 +126,7 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         epoch_reg_losses.append(regularization_loss.item())
         
         inputs = batched_graph.augmented_views
-        _, _, graph_encodings, _, output = zip(*(model(inp.to(device)) for inp in inputs))
+        _, _, graph_encodings, _, output = zip(*(model(inp.to(device, non_blocking=True)) for inp in inputs))
 
         swav_loss = 0
         num_views = len(output)
@@ -187,9 +187,6 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
         del ce_loss, projection_loss, regularization_loss
         del swav_loss, contrastive_loss, loss
 
-        if (it % 10) == 0 and torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
     logging.info(f"Epoch {epoch + 1} - Cross-Entropy Loss: {np.mean(epoch_ce_losses):.4f}, Projection Loss: {np.mean(epoch_proj_losses):.4f}, Regularization Loss: {np.mean(epoch_reg_losses):.4f}, SwAV Loss: {np.mean(epoch_swav_losses):.4f}, Contrastive Loss: {np.mean(epoch_contrast_losses):.4f}")
     ce_losses.append(float(np.mean(epoch_ce_losses)))
     proj_losses.append(float(np.mean(epoch_proj_losses)))
@@ -207,8 +204,8 @@ def eval(model, val_loader):
     all_labels = []
     with torch.no_grad():
         for batch in progress_bar:
-            labels = batch.labels.to(device)
-            graphs = batch.graphs.to(device)
+            labels = batch.labels.to(device, non_blocking=True)
+            graphs = batch.graphs.to(device, non_blocking=True)
             logits, _, _, _, _ = model(graphs)
             loss = F.cross_entropy(logits, labels)
             total_loss += loss.item()
@@ -238,8 +235,8 @@ def test(model, test_loader):
     all_labels = []
     with torch.no_grad():
         for batch in progress_bar:
-            labels = batch.labels.to(device)
-            graphs = batch.graphs.to(device)
+            labels = batch.labels.to(device, non_blocking=True)
+            graphs = batch.graphs.to(device, non_blocking=True)
             logits, _, _, _, _ = model(graphs)
             loss = F.cross_entropy(logits, labels)
             total_loss += loss.item()
@@ -416,7 +413,6 @@ if __name__ == "__main__":
                 best_val_loss = eval_stats["eval_loss"]
                 torch.save(model.state_dict(), best_loss_checkpoint_path)
                 logging.info(f"New best model saved with Loss: {best_val_loss:.4f}")
-            data_module.clear_cache()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
