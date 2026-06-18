@@ -104,8 +104,17 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
             model.swav_prototypes.weight.copy_(w)
         
         labels = batched_graph.labels.to(device, non_blocking=True)
-        graphs = batched_graph.graphs.to(device, non_blocking=True)
-        logits, activations, anchor_graph_encodings, _, _ = model(graphs)
+        combined_graphs = batched_graph.all_views.to(device, non_blocking=True)
+        logits_all, activations_all, graph_encodings_all, _, output_all = model(combined_graphs)
+        batch_size = batched_graph.sz
+        num_views = len(batched_graph.augmented_views)
+        if num_views < 2:
+            raise ValueError(f"SwAV loss requires at least 2 augmented views, got {num_views}.")
+        logits = logits_all[:batch_size]
+        activations = activations_all[:batch_size]
+        anchor_graph_encodings = graph_encodings_all[:batch_size]
+        graph_encodings = graph_encodings_all[batch_size:].chunk(num_views)
+        output = output_all[batch_size:].chunk(num_views)
         
         ce_loss = F.cross_entropy(logits, labels)
         epoch_ce_losses.append(ce_loss.item())
@@ -124,14 +133,8 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
 
         regularization_loss = torch.norm(anchor_graph_encodings, dim=-1).mean() + torch.norm(activations, dim=-1).mean()
         epoch_reg_losses.append(regularization_loss.item())
-        
-        inputs = batched_graph.augmented_views
-        _, _, graph_encodings, _, output = zip(*(model(inp.to(device, non_blocking=True)) for inp in inputs))
 
         swav_loss = 0
-        num_views = len(output)
-        if num_views < 2:
-            raise ValueError(f"SwAV loss requires at least 2 augmented views, got {num_views}.")
         views_for_assign = [view_id for view_id in config.swav.views_for_assign if view_id < num_views]
         if not views_for_assign:
             raise ValueError(f"No valid SwAV assignment views for {num_views} augmented views.")
@@ -182,8 +185,9 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
 
         optimizer.step()
 
-        del batched_graph, labels, graphs, logits, activations, activations_resampled, anchor_graph_encodings
-        del inputs, graph_encodings, output
+        del batched_graph, labels, combined_graphs, logits_all, activations_all, graph_encodings_all, output_all
+        del logits, activations, activations_resampled, anchor_graph_encodings
+        del graph_encodings, output
         del ce_loss, projection_loss, regularization_loss
         del swav_loss, contrastive_loss, loss
 
