@@ -52,6 +52,7 @@ PYTHONPATH="." python src/generate_file_slice_mapping.py &&
 PYTHONPATH="." python src/preprocess/remove_duplicates.py &&
 xargs -d '\n' -a duplicate_slices.txt rm -- &&
 PYTHONPATH="." python src/preprocess/split_dataset.py &&
+PYTHONPATH="." python src/preprocess/generate_word2vec_corpus.py &&
 PYTHONPATH="." python src/preprocess/word_embedding.py &&
 PYTHONPATH="." python src/graph_profiling.py &&
 PYTHONPATH="." python src/swav/main_swav_vul_det.py &&

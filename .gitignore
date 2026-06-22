@@ -2,6 +2,7 @@ logs/
 data/VF_perts/
 data/NVD/
 data/Devign/
+data/FFMPeg_Qemu/
 data/BigVul/
 data/ReposVul/
 data/DiverseVul/
