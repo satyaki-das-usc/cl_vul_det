@@ -1,33 +1,12 @@
-import json
-import pickle
-
-import networkx as nx
 import logging
 
 from gensim.models import Word2Vec
 from multiprocessing import cpu_count
-from os.path import join, splitext, basename
+from os.path import exists, join, splitext, basename
 from omegaconf import DictConfig, OmegaConf
 from typing import cast
 
-from tqdm import tqdm
-
 from src.common_utils import get_arg_parser, init_log
-
-class LazyStatements:
-    def __init__(self, all_slices_filepath: str):
-        logging.info(f"Loading all generated slices from {all_slices_filepath}...")
-        with open(all_slices_filepath, "r") as rfi:
-            self.all_slices = json.load(rfi)
-        logging.info(f"Completed. Loaded {len(self.all_slices)} slices.")
-
-    def __iter__(self):
-        logging.info(f"Going over {len(self.all_slices)} files...")
-        for slice_path in tqdm(self.all_slices):
-            with open(slice_path, "rb") as rbfi:
-                slice_graph: nx.DiGraph = pickle.load(rbfi)
-                for sentence in slice_graph.graph['slice_sym_token']:
-                    yield sentence
 
 if __name__ == "__main__":
     arg_parser = get_arg_parser()
@@ -44,11 +23,17 @@ if __name__ == "__main__":
     if args.use_temp_data:
         dataset_root = config.temp_root
     
-    all_slices_filepath = join(dataset_root, config.all_slices_filename)
-    all_tokens_list = LazyStatements(all_slices_filepath)
+    corpus_filepath = join(dataset_root, "w2v_corpus.txt")
+    if not exists(corpus_filepath):
+        raise FileNotFoundError(
+            f"Word2Vec corpus file not found: {corpus_filepath}. "
+            "Generate it first with src/preprocess/generate_word2vec_corpus.py."
+        )
 
-    model = Word2Vec(sentences=all_tokens_list, min_count=3, vector_size=config.gnn.embed_size,
-                    max_vocab_size=config.dataset.token.vocabulary_size, workers=USE_CPU, sg=1, epochs=10)
+    logging.info(f"Training Word2Vec model from corpus file {corpus_filepath}...")
+    model = Word2Vec(corpus_file=corpus_filepath, min_count=3, vector_size=config.gnn.embed_size,
+                    max_vocab_size=config.dataset.token.vocabulary_size, workers=USE_CPU, sg=1,
+                    epochs=10, batch_words=50000)
     logging.info(f"Word2Vec model created with {len(model.wv.index_to_key)} unique tokens...")
     w2v_save_path = join(dataset_root, "w2v.wv")
     logging.info(f"Saving Word2Vec model to {w2v_save_path}...")
