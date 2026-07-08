@@ -19,9 +19,16 @@ def generate_SF_augmentations_per_sample(slice_graph: nx.DiGraph, vocab: Vocabul
     return generate_template_augmentations(slice_graph, vocab, max_len, n_views=2)
 
 class SliceDataset(Dataset):
-    def __init__(self, slices_paths: str, config: DictConfig, vocab: Vocabulary, cache_size: int = 128) -> None:
+    def __init__(
+            self,
+            slices_paths: str,
+            config: DictConfig,
+            vocab: Vocabulary,
+            cache_size: int = 128,
+            include_augmented_views: bool = True) -> None:
         super().__init__()
         self.__config = config
+        self.__include_augmented_views = include_augmented_views
         assert exists(slices_paths), f"{slices_paths} not exists!"
         with open(slices_paths, "r") as rfi:
             self.__slice_path_list = list(json.load(rfi))
@@ -46,11 +53,19 @@ class SliceDataset(Dataset):
     def __getitem__(self, index) -> SliceGraphSample:
         slice_path = self.__slice_path_list[index]
         slice_graph: SliceGraph = self._load_slice(slice_path)
-        return SliceGraphSample(graph=slice_graph.to_torch_graph(self.__vocab, self.__config.dataset.token.max_parts),
-                         label=slice_graph.label,
-                         slice_path=self.__slice_path_list[index],
-                         augmented_views=generate_SF_augmentations_per_sample(slice_graph.slice_graph, self.__vocab, self.__max_len)
-                         )
+        augmented_views = None
+        if self.__include_augmented_views:
+            augmented_views = generate_SF_augmentations_per_sample(
+                slice_graph.slice_graph,
+                self.__vocab,
+                self.__max_len,
+            )
+        return SliceGraphSample(
+            graph=slice_graph.to_torch_graph(self.__vocab, self.__config.dataset.token.max_parts),
+            label=slice_graph.label,
+            slice_path=self.__slice_path_list[index],
+            augmented_views=augmented_views,
+        )
 
     def get_n_samples(self):
         return self.__n_samples

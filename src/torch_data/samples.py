@@ -19,13 +19,15 @@ class SliceGraphBatch:
         self.graphs = Batch.from_data_list(graphs)
         augmented_views = []
         for slice_graph in slice_graphs:
-            for idx, view in enumerate(slice_graph.augmented_views):
+            for idx, view in enumerate(slice_graph.augmented_views or []):
                 if idx < len(augmented_views):
                     augmented_views[idx].append(view)
                     continue
                 augmented_views.append([view])
         self.augmented_views = [Batch.from_data_list(view) for view in augmented_views]
-        self.all_views = Batch.from_data_list(graphs + [view for views in augmented_views for view in views])
+        self.all_views = None
+        if augmented_views:
+            self.all_views = Batch.from_data_list(graphs + [view for views in augmented_views for view in views])
         self.sz = len(slice_graphs)
 
     def __len__(self):
@@ -34,7 +36,8 @@ class SliceGraphBatch:
     def pin_memory(self) -> "SliceGraphBatch":
         self.labels = self.labels.pin_memory()
         self.graphs = self.graphs.pin_memory()
-        self.all_views = self.all_views.pin_memory()
+        if self.all_views is not None:
+            self.all_views = self.all_views.pin_memory()
         if self.augmented_views is not None:
             self.augmented_views = [view.pin_memory() if hasattr(view, 'pin_memory') else view 
                                    for view in self.augmented_views]
@@ -43,6 +46,7 @@ class SliceGraphBatch:
     def move_to_device(self, device: torch.device):
         self.labels = self.labels.to(device)
         self.graphs = self.graphs.to(device)
-        self.all_views = self.all_views.to(device)
+        if self.all_views is not None:
+            self.all_views = self.all_views.to(device)
         if self.augmented_views is not None:
             self.augmented_views = [view.to(device) for view in self.augmented_views]

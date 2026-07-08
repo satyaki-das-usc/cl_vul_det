@@ -38,8 +38,14 @@ class SliceDataModule(LightningDataModule):
     def collate_wrapper(batch: List[SliceGraphSample]) -> SliceGraphBatch:
         return SliceGraphBatch(batch)
     
-    def __create_dataset(self, data_path: str) -> Dataset:
-        return SliceDataset(data_path, self.__config, self.__vocab, cache_size=self.__train_batch_size)
+    def __create_dataset(self, data_path: str, include_augmented_views: bool = True) -> Dataset:
+        return SliceDataset(
+            data_path,
+            self.__config,
+            self.__vocab,
+            cache_size=self.__train_batch_size,
+            include_augmented_views=include_augmented_views,
+        )
 
     def __dataloader_kwargs(self):
         kwargs = {
@@ -112,7 +118,10 @@ class SliceDataModule(LightningDataModule):
         #     val_dataset_path = join(self.__dataset_root, f"{self.__config.dataset.version}_{self.__config.val_slices_filename}")
         # else:
         val_dataset_path = join(self.__dataset_root, self.__config.val_slices_filename)
-        self.__val_dataset = self.__create_dataset(val_dataset_path)
+        self.__val_dataset = self.__create_dataset(
+            val_dataset_path,
+            include_augmented_views=False,
+        )
         return DataLoader(
             self.__val_dataset,
             batch_size=self.__config.hyper_parameters.test_batch_size,
@@ -125,7 +134,10 @@ class SliceDataModule(LightningDataModule):
         #     test_dataset_path = join(self.__dataset_root, f"{self.__config.dataset.version}_{self.__config.test_slices_filename}")
         # else:
         test_dataset_path = join(self.__dataset_root, self.__config.test_slices_filename)
-        self.__test_dataset = self.__create_dataset(test_dataset_path)
+        self.__test_dataset = self.__create_dataset(
+            test_dataset_path,
+            include_augmented_views=False,
+        )
         return DataLoader(
             self.__test_dataset,
             batch_size=self.__config.hyper_parameters.test_batch_size,
