@@ -55,7 +55,19 @@ class GraphSwAVVD(nn.Module):
         
         self.__classifier = nn.Linear(config.classifier.hidden_size, config.classifier.n_classes)
     
-    def forward(self, batch: Batch):
+    def __classify(self, graph_encodings):
+        activations = self.penultimate_layer_activation(
+            self.penultimate_layer(self.__hidden_layers(graph_encodings))
+        )
+        logits = self.__classifier(self.penultimate_layer_dropout(activations))
+        return logits, activations
+
+    def forward_logits(self, batch: Batch):
+        graph_encodings = self.__graph_encoder(batch)
+        logits, _ = self.__classify(graph_encodings)
+        return logits
+
+    def forward_full(self, batch: Batch):
         """
 
         Args:
@@ -69,6 +81,9 @@ class GraphSwAVVD(nn.Module):
         if self.swav_l2norm:
             swav_embeddings = F.normalize(swav_embeddings, dim=-1, p=2)
 
-        activations = self.penultimate_layer_activation(self.penultimate_layer(self.__hidden_layers(graph_encodings)))
+        logits, activations = self.__classify(graph_encodings)
         # [n_SliceGraph; n_classes]
-        return self.__classifier(self.penultimate_layer_dropout(activations)), activations, graph_encodings, swav_embeddings, self.swav_prototypes(swav_embeddings)
+        return logits, activations, graph_encodings, swav_embeddings, self.swav_prototypes(swav_embeddings)
+
+    def forward(self, batch: Batch):
+        return self.forward_full(batch)

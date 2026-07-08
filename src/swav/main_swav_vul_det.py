@@ -7,41 +7,37 @@ import torch
 import math
 import pickle
 import gc
-import functools
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 
 import logging
 
-from multiprocessing import Manager, Pool, Queue, cpu_count
+from multiprocessing import cpu_count
 from os.path import join, splitext, basename, exists
 from omegaconf import DictConfig, OmegaConf
-from typing import cast, List
+from typing import cast
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-from imblearn.under_sampling import ClusterCentroids
 
-from torch_geometric.loader import DataLoader, ImbalancedSampler
+from torch_geometric.data import Batch
+from torch_geometric.loader import ImbalancedSampler
 from pytorch_lightning import seed_everything
 import torch.nn.functional as F
 from timm.optim.lars import Lars
 
 from src.common_utils import get_arg_parser, filter_warnings, init_log
 from src.vocabulary import Vocabulary
-from src.torch_data.datasets import SliceDataset
 from src.torch_data.datamodules import SliceDataModule
 from src.models.swav_vd import GraphSwAVVD
 from src.models.modules.losses import SupConLoss, InfoNCE, OrthogonalProjectionLoss
 from src.swav.assignment_protocols import sinkhorn, uot_sinkhorn_gpu
-from src.swav.graph_augmentations import generate_SF_augmentations
 
 contrastive_criterion = None
 projection_criterion = None
 vocab = None
 config = None
 device = None
-resampling_criterion = None
 
 ce_losses = []
 proj_losses = []
@@ -70,16 +66,135 @@ gnn_name_map = {
     "st": "ST"
 }
 
-def get_slice_label_parallel(slice_path, queue: Queue):
-    try:
-        with open(slice_path, "rb") as rbfi:
-            slice_graph: nx.DiGraph = pickle.load(rbfi)
-        
-        return slice_graph.graph["label"]
-    
-    except Exception as e:
-        logging.error(slice_path)
-        raise e
+def is_lambda_enabled(lambda_name: str) -> bool:
+    return float(config.hyper_parameters.lambdas.get(lambda_name, 0.0)) > 0.0
+
+def is_contrastive_enabled() -> bool:
+    return (
+        bool(config.swav.contrastive.get("enabled", True))
+        and is_lambda_enabled("contrastive")
+    )
+
+def validate_training_views(num_views: int):
+    if num_views < 2:
+        raise ValueError(f"SwAV loss requires at least 2 augmented views, got {num_views}.")
+    if is_contrastive_enabled() and num_views != 2:
+        raise ValueError(
+            "Contrastive loss currently expects exactly 2 augmented views, "
+            f"got {num_views}."
+        )
+
+def forward_model(
+        model,
+        graphs,
+        forward_fn=None):
+    if forward_fn is None:
+        forward_fn = model
+    return forward_fn(graphs.to(device, non_blocking=True))
+
+def build_all_views_batch(batched_graph):
+    graphs = batched_graph.graphs.to_data_list()
+    augmented_views = [
+        view
+        for view_batch in batched_graph.augmented_views
+        for view in view_batch.to_data_list()
+    ]
+    return Batch.from_data_list(graphs + augmented_views)
+
+def compute_training_loss(model, batched_graph):
+    num_views = len(batched_graph.augmented_views)
+    validate_training_views(num_views)
+
+    labels = batched_graph.labels.to(device, non_blocking=True)
+    combined_graphs = getattr(batched_graph, "all_views", None)
+    if combined_graphs is None:
+        combined_graphs = build_all_views_batch(batched_graph)
+    logits_all, activations_all, graph_encodings_all, _, output_all = forward_model(
+        model,
+        combined_graphs,
+    )
+    batch_size = batched_graph.sz
+    logits = logits_all[:batch_size]
+    activations = activations_all[:batch_size]
+    anchor_graph_encodings = graph_encodings_all[:batch_size]
+    graph_encodings = graph_encodings_all[batch_size:].chunk(num_views)
+    output = output_all[batch_size:].chunk(num_views)
+
+    zero_loss = logits.new_zeros(())
+
+    ce_loss = F.cross_entropy(logits, labels)
+
+    projection_loss = zero_loss
+    if is_lambda_enabled("projection"):
+        if projection_criterion is None:
+            raise RuntimeError("projection_criterion is not initialized.")
+        projection_loss = projection_criterion(activations, labels)
+
+    regularization_loss = zero_loss
+    if is_lambda_enabled("regularization"):
+        regularization_loss = torch.norm(anchor_graph_encodings, dim=-1).mean() + torch.norm(activations, dim=-1).mean()
+
+    swav_loss = logits.new_zeros(())
+    if is_lambda_enabled("swav"):
+        views_for_assign = [view_id for view_id in config.swav.views_for_assign if view_id < num_views]
+        if not views_for_assign:
+            raise ValueError(f"No valid SwAV assignment views for {num_views} augmented views.")
+        for view_id in views_for_assign:
+            with torch.no_grad():
+                out = output[view_id].detach()
+                q = assignment_functions[config.swav.assignment_protocol](out)
+            subloss = logits.new_zeros(())
+            for v in np.delete(np.arange(num_views), view_id):
+                x = output[v] / config.swav.temperature
+                subloss = subloss - torch.mean(torch.sum(q * F.log_softmax(x, dim=-1), dim=-1))
+            swav_loss = swav_loss + subloss / (num_views - 1)
+        swav_loss = swav_loss / len(views_for_assign)
+
+    contrastive_loss = logits.new_zeros(())
+    if is_contrastive_enabled():
+        if contrastive_criterion is None:
+            raise RuntimeError("contrastive_criterion is not initialized.")
+        if config.swav.contrastive.criterion == "info_nce":
+            contrastive_loss = (contrastive_criterion(anchor_graph_encodings, graph_encodings[0]) + contrastive_criterion(anchor_graph_encodings, graph_encodings[1])) / 2.0
+        elif config.swav.contrastive.criterion == "supcon":
+            contrastive_loss = contrastive_criterion(torch.stack([anchor_graph_encodings, graph_encodings[0], graph_encodings[1]], dim=1), labels=labels)
+        elif config.swav.contrastive.criterion == "simclr":
+            contrastive_loss = contrastive_criterion(torch.stack([anchor_graph_encodings, graph_encodings[0], graph_encodings[1]], dim=1))
+        else:
+            raise ValueError(f"Unsupported contrastive criterion: {config.swav.contrastive.criterion}")
+
+    loss = (
+        config.hyper_parameters.lambdas.classification * ce_loss
+        + config.hyper_parameters.lambdas.projection * projection_loss
+        + config.hyper_parameters.lambdas.regularization * regularization_loss
+        + config.hyper_parameters.lambdas.swav * swav_loss
+        + config.hyper_parameters.lambdas.contrastive * contrastive_loss
+    )
+
+    metrics = {
+        "ce": ce_loss.item(),
+        "proj": projection_loss.item(),
+        "reg": regularization_loss.item(),
+        "swav": swav_loss.item(),
+        "contrast": contrastive_loss.item(),
+    }
+    return loss, metrics
+
+def run_training_step(model, optimizer, batched_graph, iteration):
+    optimizer.zero_grad(set_to_none=True)
+
+    loss, metrics = compute_training_loss(model, batched_graph)
+    loss.backward()
+    # cancel gradients for the prototypes
+    if iteration < config.swav.freeze_prototypes_niters:
+        for name, p in model.named_parameters():
+            if "swav_prototypes" not in name:
+                continue
+            p.grad = None
+
+    optimizer.step()
+    del loss
+    return metrics
 
 def train(train_loader, model, optimizer, epoch, lr_schedule):
     logging.info(f"Epoch {epoch + 1}")
@@ -102,94 +217,28 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
             w = model.swav_prototypes.weight.data.clone()
             w = F.normalize(w, dim=1, p=2)
             model.swav_prototypes.weight.copy_(w)
-        
-        labels = batched_graph.labels.to(device, non_blocking=True)
-        combined_graphs = batched_graph.all_views.to(device, non_blocking=True)
-        logits_all, activations_all, graph_encodings_all, _, output_all = model(combined_graphs)
-        batch_size = batched_graph.sz
-        num_views = len(batched_graph.augmented_views)
-        if num_views < 2:
-            raise ValueError(f"SwAV loss requires at least 2 augmented views, got {num_views}.")
-        logits = logits_all[:batch_size]
-        activations = activations_all[:batch_size]
-        anchor_graph_encodings = graph_encodings_all[:batch_size]
-        graph_encodings = graph_encodings_all[batch_size:].chunk(num_views)
-        output = output_all[batch_size:].chunk(num_views)
-        
-        ce_loss = F.cross_entropy(logits, labels)
-        epoch_ce_losses.append(ce_loss.item())
 
-        activations_resampled = torch.empty((0, activations.shape[1]), dtype=torch.float32)
-
-        # if torch.unique(labels).size(0) > 1:
-        #     activations_resampled, labels_resampled = resampling_criterion.fit_resample(activations.detach().cpu().numpy(), labels.detach().cpu().numpy())
-        if activations_resampled.shape[0] > 2:
-            activations_resampled = torch.tensor(activations_resampled, dtype=torch.float32).to(device)
-            labels_resampled = torch.tensor(labels_resampled, dtype=torch.long).to(device)
-            projection_loss = projection_criterion(activations_resampled, labels_resampled)
-        else:
-            projection_loss = projection_criterion(activations, labels)
-        epoch_proj_losses.append(projection_loss.item())
-
-        regularization_loss = torch.norm(anchor_graph_encodings, dim=-1).mean() + torch.norm(activations, dim=-1).mean()
-        epoch_reg_losses.append(regularization_loss.item())
-
-        swav_loss = 0
-        views_for_assign = [view_id for view_id in config.swav.views_for_assign if view_id < num_views]
-        if not views_for_assign:
-            raise ValueError(f"No valid SwAV assignment views for {num_views} augmented views.")
-        for view_id in views_for_assign:
-            with torch.no_grad():
-                out = output[view_id].detach()
-                q = assignment_functions[config.swav.assignment_protocol](out)
-            subloss = 0
-            for v in np.delete(np.arange(num_views), view_id):
-                x = output[v] / config.swav.temperature
-                subloss -= torch.mean(torch.sum(q * F.log_softmax(x, dim=-1), dim=-1))
-            swav_loss += subloss / (num_views - 1)
-        swav_loss /= len(views_for_assign)
-        epoch_swav_losses.append(swav_loss.item())
-
-        if config.swav.contrastive.criterion == "info_nce":
-            contrastive_loss = (contrastive_criterion(anchor_graph_encodings, graph_encodings[0]) + contrastive_criterion(anchor_graph_encodings, graph_encodings[1])) / 2.0
-        elif config.swav.contrastive.criterion == "supcon":
-            contrastive_loss = contrastive_criterion(torch.stack([anchor_graph_encodings, graph_encodings[0], graph_encodings[1]], dim=1), labels=labels)
-        elif config.swav.contrastive.criterion == "simclr":
-            contrastive_loss = contrastive_criterion(torch.stack([anchor_graph_encodings, graph_encodings[0], graph_encodings[1]], dim=1))
-        epoch_contrast_losses.append(contrastive_loss.item())
-
-        progress_bar.set_postfix({
-            "ce": ce_loss.item(),
-            'proj': projection_loss.item(),
-            'reg': regularization_loss.item(),
-            'swav': swav_loss.item(),
-            'contrast': contrastive_loss.item()
-        })
-
-        loss = (
-            config.hyper_parameters.lambdas.classification * ce_loss
-            + config.hyper_parameters.lambdas.projection * projection_loss
-            + config.hyper_parameters.lambdas.regularization * regularization_loss
-            + config.hyper_parameters.lambdas.swav * swav_loss
-            + config.hyper_parameters.lambdas.contrastive * contrastive_loss
+        batch_losses = run_training_step(
+            model,
+            optimizer,
+            batched_graph,
+            iteration,
         )
 
-        optimizer.zero_grad()
-        loss.backward()
-        # cancel gradients for the prototypes
-        if iteration < config.swav.freeze_prototypes_niters:
-            for name, p in model.named_parameters():
-                if "swav_prototypes" not in name:
-                    continue
-                p.grad = None
+        epoch_ce_losses.append(batch_losses["ce"])
+        epoch_proj_losses.append(batch_losses["proj"])
+        epoch_reg_losses.append(batch_losses["reg"])
+        epoch_swav_losses.append(batch_losses["swav"])
+        epoch_contrast_losses.append(batch_losses["contrast"])
 
-        optimizer.step()
-
-        del batched_graph, labels, combined_graphs, logits_all, activations_all, graph_encodings_all, output_all
-        del logits, activations, activations_resampled, anchor_graph_encodings
-        del graph_encodings, output
-        del ce_loss, projection_loss, regularization_loss
-        del swav_loss, contrastive_loss, loss
+        progress_bar.set_postfix({
+            "ce": batch_losses["ce"],
+            'proj': batch_losses["proj"],
+            'reg': batch_losses["reg"],
+            'swav': batch_losses["swav"],
+            'contrast': batch_losses["contrast"]
+        })
+        del batched_graph, batch_losses
 
     logging.info(f"Epoch {epoch + 1} - Cross-Entropy Loss: {np.mean(epoch_ce_losses):.4f}, Projection Loss: {np.mean(epoch_proj_losses):.4f}, Regularization Loss: {np.mean(epoch_reg_losses):.4f}, SwAV Loss: {np.mean(epoch_swav_losses):.4f}, Contrastive Loss: {np.mean(epoch_contrast_losses):.4f}")
     ce_losses.append(float(np.mean(epoch_ce_losses)))
@@ -200,7 +249,7 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
 
     del train_loader
 
-def eval(model, val_loader):
+def evaluate(model, val_loader):
     progress_bar = tqdm(val_loader, desc="Validation")
     model.eval()
     total_loss = 0
@@ -209,15 +258,18 @@ def eval(model, val_loader):
     with torch.no_grad():
         for batch in progress_bar:
             labels = batch.labels.to(device, non_blocking=True)
-            graphs = batch.graphs.to(device, non_blocking=True)
-            logits, _, _, _, _ = model(graphs)
+            logits = forward_model(
+                model,
+                batch.graphs,
+                forward_fn=model.forward_logits,
+            )
             loss = F.cross_entropy(logits, labels)
             total_loss += loss.item()
             _, preds = logits.max(dim=1)
             all_preds.extend(preds.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
 
-            del batch, labels, graphs, logits, preds, loss
+            del batch, labels, logits, preds, loss
     
     stats = {
         "eval_loss": total_loss / len(val_loader),
@@ -240,15 +292,18 @@ def test(model, test_loader):
     with torch.no_grad():
         for batch in progress_bar:
             labels = batch.labels.to(device, non_blocking=True)
-            graphs = batch.graphs.to(device, non_blocking=True)
-            logits, _, _, _, _ = model(graphs)
+            logits = forward_model(
+                model,
+                batch.graphs,
+                forward_fn=model.forward_logits,
+            )
             loss = F.cross_entropy(logits, labels)
             total_loss += loss.item()
             _, preds = logits.max(dim=1)
             all_preds.extend(preds.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
 
-            del batch, labels, graphs, logits, preds, loss
+            del batch, labels, logits, preds, loss
     
     stats = {
         "test_loss": total_loss / len(test_loader),
@@ -260,28 +315,67 @@ def test(model, test_loader):
     
     return stats
 
+def require_checkpoint(checkpoint_path: str, description: str):
+    if not exists(checkpoint_path):
+        raise FileNotFoundError(
+            f"{description} checkpoint not found at {checkpoint_path}. "
+            "Run training first, or use --skip_training only when the checkpoint already exists."
+        )
+
 if __name__ == "__main__":
     filter_warnings()
     arg_parser = get_arg_parser()
     arg_parser.add_argument("--skip_training", action='store_true', help="Skip training phase")
-    arg_parser.add_argument("--no_cl", action='store_true', help="Use contrastive learning")
-    arg_parser.add_argument("--exclude_NNs", action='store_true', help="Exclude NN pairs during contrastive learning")
-    arg_parser.add_argument("--use_lr_warmup", action='store_true', help="Exclude Learning Rate warmup")
-    arg_parser.add_argument("--no_cl_warmup", action='store_true', help="Use contrastive learning warmup")
+    arg_parser.add_argument("--no_cl", action='store_true', help="Disable contrastive learning")
+    arg_parser.add_argument("--exclude_NNs", action='store_true', help="Exclude NN pairs if contrastive pair filtering is used")
+    arg_parser.add_argument("--use_lr_warmup", action='store_true', help="Enable learning-rate warmup in the config")
+    arg_parser.add_argument("--no_cl_warmup", action='store_true', help="Disable contrastive learning warmup in the config")
+    arg_parser.add_argument("--train_batch_size", type=int, default=None,
+                            help="Override all configured training batch sizes.")
+    arg_parser.add_argument("--test_batch_size", type=int, default=None,
+                            help="Override validation and test batch size.")
 
     args = arg_parser.parse_args()
 
     config = cast(DictConfig, OmegaConf.load(args.config))
     seed_everything(config.seed, workers=True)
 
+    if args.no_cl:
+        OmegaConf.update(config, "swav.contrastive.enabled", False, force_add=True)
     if args.exclude_NNs:
         config.exclude_NNs = True
     if args.use_lr_warmup:
         config.hyper_parameters.use_warmup_lr = True
     if args.no_cl_warmup:
         config.hyper_parameters.contrastive_warmup_epochs = 0
-
+    if args.train_batch_size is not None:
+        if args.train_batch_size < 1:
+            raise ValueError("--train_batch_size must be >= 1")
+        config.hyper_parameters.batch_sizes = [
+            args.train_batch_size
+            for _ in config.hyper_parameters.batch_sizes
+        ]
+    if args.test_batch_size is not None:
+        if args.test_batch_size < 1:
+            raise ValueError("--test_batch_size must be >= 1")
+        config.hyper_parameters.test_batch_size = args.test_batch_size
     init_log(splitext(basename(__file__))[0])
+
+    if args.exclude_NNs:
+        logging.warning(
+            "--exclude_NNs is accepted for compatibility but this SwAV training script "
+            "does not construct NN contrastive pairs; it only affects checkpoint naming."
+        )
+    if args.use_lr_warmup:
+        logging.warning(
+            "--use_lr_warmup sets hyper_parameters.use_warmup_lr, but this script uses "
+            "the SwAV LR schedule controlled by swav.warmup_epochs."
+        )
+    if args.no_cl_warmup:
+        logging.warning(
+            "--no_cl_warmup sets hyper_parameters.contrastive_warmup_epochs to 0, but "
+            "contrastive warmup is not implemented in this SwAV training loop."
+        )
 
     if config.num_workers != -1:
         USE_CPU = min(config.num_workers, cpu_count())
@@ -364,9 +458,10 @@ if __name__ == "__main__":
                             math.cos(math.pi * t / (sum([train_loader_lens[i // 10] for i in range(config.swav.warmup_epochs, config.hyper_parameters.n_epochs)])))) for t in iters])
     lr_schedule = np.concatenate((warmup_lr_schedule, cosine_lr_schedule))
 
-    contrastive_criterion = contrastive_options[config.swav.contrastive.criterion](temperature=config.swav.contrastive.temperature)
+    contrastive_criterion = None
+    if is_contrastive_enabled():
+        contrastive_criterion = contrastive_options[config.swav.contrastive.criterion](temperature=config.swav.contrastive.temperature)
     projection_criterion = OrthogonalProjectionLoss()
-    resampling_criterion = ClusterCentroids(sampling_strategy='auto', random_state=42)
 
     proj_losses = []
     ce_losses = []
@@ -379,7 +474,7 @@ if __name__ == "__main__":
     gnn_name = gnn_name_map[config.gnn.name]
     nn_text = "ExcludeNN" if config.exclude_NNs else "IncludeNN"
     cl_warmup_text = "CLWarmup" if config.hyper_parameters.contrastive_warmup_epochs > 0 else "NoCLWarmup"
-    contrastive_text = "NoContrastive" if config.hyper_parameters.lambdas.contrastive == 0.0 else config.swav.contrastive.criterion
+    contrastive_text = "NoContrastive" if not is_contrastive_enabled() else config.swav.contrastive.criterion
     do_swav = "NoSwAV" if config.hyper_parameters.lambdas.swav == 0.0 else "DoSwAV"
     gnn_attention_only = "GNNAttentionOnly" if config.gnn.attention_only else "GNNWithPooling"
     use_edge_attr = "WithEdgeAttr" if config.gnn.use_edge_attr else "NoEdgeAttr"
@@ -398,7 +493,7 @@ if __name__ == "__main__":
     best_loss_checkpoint_path = join(best_loss_directory, f"{model_name}.ckpt")
     logging.info(f"Checkpoint directory: {checkpoint_dir}")
     
-    best_val_f1 = 0.0
+    best_val_f1 = -1.0
     best_val_loss = float('inf')
     logging.info("Loading data module...")
     data_module = SliceDataModule(config, vocab, config.hyper_parameters.batch_sizes[0], train_sampler=sampler, use_temp_data=args.use_temp_data)
@@ -408,7 +503,7 @@ if __name__ == "__main__":
             train_loader = data_module.train_dataloader()
             train(train_loader, model, optimizer, epoch, lr_schedule)
             data_module.set_train_batch_size(config.hyper_parameters.batch_sizes[min(epoch + 1, len(config.hyper_parameters.batch_sizes) - 1)])
-            eval_stats = eval(model, data_module.val_dataloader())
+            eval_stats = evaluate(model, data_module.val_dataloader())
             if eval_stats["f1"] > best_val_f1:
                 best_val_f1 = eval_stats["f1"]
                 torch.save(model.state_dict(), best_f1_checkpoint_path)
@@ -448,6 +543,7 @@ if __name__ == "__main__":
             json.dump(test_stats, wfi, indent=4)
     
     logging.info("Testing model with best validation F1...")
+    require_checkpoint(best_f1_checkpoint_path, "Best validation F1")
     model.load_state_dict(torch.load(best_f1_checkpoint_path, map_location=device))
     test_stats = test(model, data_module.test_dataloader())
     data_module.clear_cache()
@@ -461,6 +557,7 @@ if __name__ == "__main__":
         json.dump(test_stats, wfi, indent=4)
     
     logging.info("Testing model with best validation loss...")
+    require_checkpoint(best_loss_checkpoint_path, "Best validation loss")
     model.load_state_dict(torch.load(best_loss_checkpoint_path, map_location=device))
     test_stats = test(model, data_module.test_dataloader())
     
