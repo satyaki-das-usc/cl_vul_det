@@ -92,6 +92,53 @@ def forward_model(
         forward_fn = model
     return forward_fn(graphs.to(device, non_blocking=True))
 
+def get_train_batch_size_for_epoch(epoch: int) -> int:
+    batch_sizes = config.hyper_parameters.batch_sizes
+    if len(batch_sizes) == 0:
+        raise ValueError("config.hyper_parameters.batch_sizes must contain at least one value.")
+    return int(batch_sizes[min(epoch, len(batch_sizes) - 1)])
+
+def get_train_steps_for_epoch(epoch: int, num_samples: int) -> int:
+    batch_size = get_train_batch_size_for_epoch(epoch)
+    return math.ceil(num_samples / batch_size)
+
+def get_epoch_start_steps(num_samples: int):
+    epoch_start_steps = []
+    cumulative_steps = 0
+    for epoch in range(config.hyper_parameters.n_epochs):
+        epoch_start_steps.append(cumulative_steps)
+        cumulative_steps += get_train_steps_for_epoch(epoch, num_samples)
+    return epoch_start_steps
+
+def build_lr_schedule(num_samples: int):
+    n_epochs = int(config.hyper_parameters.n_epochs)
+    warmup_epochs = min(int(config.swav.warmup_epochs), n_epochs)
+    warmup_steps = sum(
+        get_train_steps_for_epoch(epoch, num_samples)
+        for epoch in range(warmup_epochs)
+    )
+    cosine_steps = sum(
+        get_train_steps_for_epoch(epoch, num_samples)
+        for epoch in range(warmup_epochs, n_epochs)
+    )
+
+    warmup_lr_schedule = np.linspace(
+        config.swav.start_warmup,
+        config.swav.base_lr,
+        warmup_steps,
+    )
+    if cosine_steps == 0:
+        return warmup_lr_schedule
+
+    iters = np.arange(cosine_steps)
+    cosine_lr_schedule = np.array([
+        config.swav.final_lr
+        + 0.5 * (config.swav.base_lr - config.swav.final_lr)
+        * (1 + math.cos(math.pi * t / cosine_steps))
+        for t in iters
+    ])
+    return np.concatenate((warmup_lr_schedule, cosine_lr_schedule))
+
 def build_all_views_batch(batched_graph):
     graphs = batched_graph.graphs.to_data_list()
     augmented_views = [
@@ -196,7 +243,7 @@ def run_training_step(model, optimizer, batched_graph, iteration):
     del loss
     return metrics
 
-def train(train_loader, model, optimizer, epoch, lr_schedule):
+def train(train_loader, model, optimizer, epoch, lr_schedule, epoch_start_step):
     logging.info(f"Epoch {epoch + 1}")
     model.train()
     progress_bar = tqdm(train_loader, desc="Training")
@@ -209,7 +256,7 @@ def train(train_loader, model, optimizer, epoch, lr_schedule):
 
     for it, batched_graph in enumerate(progress_bar):
         # update learning rate
-        iteration = epoch * len(train_loader) + it
+        iteration = epoch_start_step + it
         for param_group in optimizer.param_groups:
             param_group["lr"] = lr_schedule[iteration]
 
@@ -451,12 +498,8 @@ if __name__ == "__main__":
         momentum=0.9,
         weight_decay=config.swav.wd
     )
-    train_loader_lens = [math.ceil(num_samples / batch_size) for batch_size in config.hyper_parameters.batch_sizes]
-    warmup_lr_schedule = np.linspace(config.swav.start_warmup, config.swav.base_lr, sum([train_loader_lens[i // 10] for i in range(config.swav.warmup_epochs)]))
-    iters = np.arange(sum([train_loader_lens[i // 10] for i in range(config.swav.warmup_epochs, config.hyper_parameters.n_epochs)]))
-    cosine_lr_schedule = np.array([config.swav.final_lr + 0.5 * (config.swav.base_lr - config.swav.final_lr) * (1 + \
-                            math.cos(math.pi * t / (sum([train_loader_lens[i // 10] for i in range(config.swav.warmup_epochs, config.hyper_parameters.n_epochs)])))) for t in iters])
-    lr_schedule = np.concatenate((warmup_lr_schedule, cosine_lr_schedule))
+    lr_schedule = build_lr_schedule(num_samples)
+    epoch_start_steps = get_epoch_start_steps(num_samples)
 
     contrastive_criterion = None
     if is_contrastive_enabled():
@@ -496,13 +539,26 @@ if __name__ == "__main__":
     best_val_f1 = -1.0
     best_val_loss = float('inf')
     logging.info("Loading data module...")
-    data_module = SliceDataModule(config, vocab, config.hyper_parameters.batch_sizes[0], train_sampler=sampler, use_temp_data=args.use_temp_data)
+    data_module = SliceDataModule(
+        config,
+        vocab,
+        get_train_batch_size_for_epoch(0),
+        train_sampler=sampler,
+        use_temp_data=args.use_temp_data,
+    )
     logging.info("Data module loading completed.")
     if not args.skip_training:
         for epoch in range(config.hyper_parameters.n_epochs):
+            data_module.set_train_batch_size(get_train_batch_size_for_epoch(epoch))
             train_loader = data_module.train_dataloader()
-            train(train_loader, model, optimizer, epoch, lr_schedule)
-            data_module.set_train_batch_size(config.hyper_parameters.batch_sizes[min(epoch + 1, len(config.hyper_parameters.batch_sizes) - 1)])
+            train(
+                train_loader,
+                model,
+                optimizer,
+                epoch,
+                lr_schedule,
+                epoch_start_steps[epoch],
+            )
             eval_stats = evaluate(model, data_module.val_dataloader())
             if eval_stats["f1"] > best_val_f1:
                 best_val_f1 = eval_stats["f1"]
