@@ -13,10 +13,11 @@ import matplotlib.pyplot as plt
 
 import logging
 
+from dataclasses import dataclass, field
 from multiprocessing import cpu_count
 from os.path import join, splitext, basename, exists
 from omegaconf import DictConfig, OmegaConf
-from typing import cast
+from typing import List, Optional, cast
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
@@ -34,18 +35,6 @@ from src.models.swav_vd import GraphSwAVVD
 from src.models.modules.losses import SupConLoss, InfoNCE, OrthogonalProjectionLoss
 from src.swav.assignment_protocols import sinkhorn, uot_sinkhorn_gpu
 
-contrastive_criterion = None
-projection_criterion = None
-vocab = None
-config = None
-device = None
-
-ce_losses = []
-proj_losses = []
-reg_losses = []
-swav_losses = []
-contrast_losses = []
-
 contrastive_options = {
     "supcon": SupConLoss,
     "simclr": SupConLoss,
@@ -57,6 +46,19 @@ assignment_functions = {
     "uot_sinkhorn": uot_sinkhorn_gpu
 }
 
+@dataclass
+class TrainingContext:
+    config: DictConfig
+    device: torch.device
+    projection_criterion: Optional[OrthogonalProjectionLoss]
+    contrastive_criterion: Optional[object]
+    use_amp: bool
+    ce_losses: List[float] = field(default_factory=list)
+    proj_losses: List[float] = field(default_factory=list)
+    reg_losses: List[float] = field(default_factory=list)
+    swav_losses: List[float] = field(default_factory=list)
+    contrast_losses: List[float] = field(default_factory=list)
+
 gnn_name_map = {
     "gcn": "GCN",
     "gin": "GIN",
@@ -67,65 +69,66 @@ gnn_name_map = {
     "st": "ST"
 }
 
-def is_lambda_enabled(lambda_name: str) -> bool:
-    return float(config.hyper_parameters.lambdas.get(lambda_name, 0.0)) > 0.0
+def is_lambda_enabled(ctx: TrainingContext, lambda_name: str) -> bool:
+    return float(ctx.config.hyper_parameters.lambdas.get(lambda_name, 0.0)) > 0.0
 
-def is_contrastive_enabled() -> bool:
+def is_contrastive_enabled(ctx: TrainingContext) -> bool:
     return (
-        bool(config.swav.contrastive.get("enabled", True))
-        and is_lambda_enabled("contrastive")
+        bool(ctx.config.swav.contrastive.get("enabled", True))
+        and is_lambda_enabled(ctx, "contrastive")
     )
 
-def validate_training_views(num_views: int):
+def validate_training_views(ctx: TrainingContext, num_views: int):
     if num_views < 2:
         raise ValueError(f"SwAV loss requires at least 2 augmented views, got {num_views}.")
-    if is_contrastive_enabled() and num_views != 2:
+    if is_contrastive_enabled(ctx) and num_views != 2:
         raise ValueError(
             "Contrastive loss currently expects exactly 2 augmented views, "
             f"got {num_views}."
         )
 
 def forward_model(
+        ctx: TrainingContext,
         model,
         graphs,
         forward_fn=None):
     if forward_fn is None:
         forward_fn = model
-    return forward_fn(graphs.to(device, non_blocking=True))
+    return forward_fn(graphs.to(ctx.device, non_blocking=True))
 
-def get_train_batch_size_for_epoch(epoch: int) -> int:
-    batch_sizes = config.hyper_parameters.batch_sizes
+def get_train_batch_size_for_epoch(ctx: TrainingContext, epoch: int) -> int:
+    batch_sizes = ctx.config.hyper_parameters.batch_sizes
     if len(batch_sizes) == 0:
         raise ValueError("config.hyper_parameters.batch_sizes must contain at least one value.")
     return int(batch_sizes[min(epoch, len(batch_sizes) - 1)])
 
-def get_train_steps_for_epoch(epoch: int, num_samples: int) -> int:
-    batch_size = get_train_batch_size_for_epoch(epoch)
+def get_train_steps_for_epoch(ctx: TrainingContext, epoch: int, num_samples: int) -> int:
+    batch_size = get_train_batch_size_for_epoch(ctx, epoch)
     return math.ceil(num_samples / batch_size)
 
-def get_epoch_start_steps(num_samples: int):
+def get_epoch_start_steps(ctx: TrainingContext, num_samples: int):
     epoch_start_steps = []
     cumulative_steps = 0
-    for epoch in range(config.hyper_parameters.n_epochs):
+    for epoch in range(ctx.config.hyper_parameters.n_epochs):
         epoch_start_steps.append(cumulative_steps)
-        cumulative_steps += get_train_steps_for_epoch(epoch, num_samples)
+        cumulative_steps += get_train_steps_for_epoch(ctx, epoch, num_samples)
     return epoch_start_steps
 
-def build_lr_schedule(num_samples: int):
-    n_epochs = int(config.hyper_parameters.n_epochs)
-    warmup_epochs = min(int(config.swav.warmup_epochs), n_epochs)
+def build_lr_schedule(ctx: TrainingContext, num_samples: int):
+    n_epochs = int(ctx.config.hyper_parameters.n_epochs)
+    warmup_epochs = min(int(ctx.config.swav.warmup_epochs), n_epochs)
     warmup_steps = sum(
-        get_train_steps_for_epoch(epoch, num_samples)
+        get_train_steps_for_epoch(ctx, epoch, num_samples)
         for epoch in range(warmup_epochs)
     )
     cosine_steps = sum(
-        get_train_steps_for_epoch(epoch, num_samples)
+        get_train_steps_for_epoch(ctx, epoch, num_samples)
         for epoch in range(warmup_epochs, n_epochs)
     )
 
     warmup_lr_schedule = np.linspace(
-        config.swav.start_warmup,
-        config.swav.base_lr,
+        ctx.config.swav.start_warmup,
+        ctx.config.swav.base_lr,
         warmup_steps,
     )
     if cosine_steps == 0:
@@ -133,8 +136,8 @@ def build_lr_schedule(num_samples: int):
 
     iters = np.arange(cosine_steps)
     cosine_lr_schedule = np.array([
-        config.swav.final_lr
-        + 0.5 * (config.swav.base_lr - config.swav.final_lr)
+        ctx.config.swav.final_lr
+        + 0.5 * (ctx.config.swav.base_lr - ctx.config.swav.final_lr)
         * (1 + math.cos(math.pi * t / cosine_steps))
         for t in iters
     ])
@@ -178,15 +181,16 @@ def build_all_views_batch(batched_graph):
     ]
     return Batch.from_data_list(graphs + augmented_views)
 
-def compute_training_loss(model, batched_graph):
+def compute_training_loss(ctx: TrainingContext, model, batched_graph):
     num_views = len(batched_graph.augmented_views)
-    validate_training_views(num_views)
+    validate_training_views(ctx, num_views)
 
-    labels = batched_graph.labels.to(device, non_blocking=True)
+    labels = batched_graph.labels.to(ctx.device, non_blocking=True)
     combined_graphs = getattr(batched_graph, "all_views", None)
     if combined_graphs is None:
         combined_graphs = build_all_views_batch(batched_graph)
     logits_all, activations_all, graph_encodings_all, _, output_all = forward_model(
+        ctx,
         model,
         combined_graphs,
     )
@@ -202,51 +206,51 @@ def compute_training_loss(model, batched_graph):
     ce_loss = F.cross_entropy(logits, labels)
 
     projection_loss = zero_loss
-    if is_lambda_enabled("projection"):
-        if projection_criterion is None:
+    if is_lambda_enabled(ctx, "projection"):
+        if ctx.projection_criterion is None:
             raise RuntimeError("projection_criterion is not initialized.")
-        projection_loss = projection_criterion(activations, labels)
+        projection_loss = ctx.projection_criterion(activations, labels)
 
     regularization_loss = zero_loss
-    if is_lambda_enabled("regularization"):
+    if is_lambda_enabled(ctx, "regularization"):
         regularization_loss = torch.norm(anchor_graph_encodings, dim=-1).mean() + torch.norm(activations, dim=-1).mean()
 
     swav_loss = logits.new_zeros(())
-    if is_lambda_enabled("swav"):
-        views_for_assign = [view_id for view_id in config.swav.views_for_assign if view_id < num_views]
+    if is_lambda_enabled(ctx, "swav"):
+        views_for_assign = [view_id for view_id in ctx.config.swav.views_for_assign if view_id < num_views]
         if not views_for_assign:
             raise ValueError(f"No valid SwAV assignment views for {num_views} augmented views.")
         for view_id in views_for_assign:
             with torch.no_grad():
                 with torch.cuda.amp.autocast(enabled=False):
                     out = output[view_id].detach().float()
-                    q = assignment_functions[config.swav.assignment_protocol](out)
+                    q = assignment_functions[ctx.config.swav.assignment_protocol](out)
             subloss = logits.new_zeros(())
             for v in np.delete(np.arange(num_views), view_id):
-                x = output[v] / config.swav.temperature
+                x = output[v] / ctx.config.swav.temperature
                 subloss = subloss - torch.mean(torch.sum(q * F.log_softmax(x, dim=-1), dim=-1))
             swav_loss = swav_loss + subloss / (num_views - 1)
         swav_loss = swav_loss / len(views_for_assign)
 
     contrastive_loss = logits.new_zeros(())
-    if is_contrastive_enabled():
-        if contrastive_criterion is None:
+    if is_contrastive_enabled(ctx):
+        if ctx.contrastive_criterion is None:
             raise RuntimeError("contrastive_criterion is not initialized.")
-        if config.swav.contrastive.criterion == "info_nce":
-            contrastive_loss = (contrastive_criterion(anchor_graph_encodings, graph_encodings[0]) + contrastive_criterion(anchor_graph_encodings, graph_encodings[1])) / 2.0
-        elif config.swav.contrastive.criterion == "supcon":
-            contrastive_loss = contrastive_criterion(torch.stack([anchor_graph_encodings, graph_encodings[0], graph_encodings[1]], dim=1), labels=labels)
-        elif config.swav.contrastive.criterion == "simclr":
-            contrastive_loss = contrastive_criterion(torch.stack([anchor_graph_encodings, graph_encodings[0], graph_encodings[1]], dim=1))
+        if ctx.config.swav.contrastive.criterion == "info_nce":
+            contrastive_loss = (ctx.contrastive_criterion(anchor_graph_encodings, graph_encodings[0]) + ctx.contrastive_criterion(anchor_graph_encodings, graph_encodings[1])) / 2.0
+        elif ctx.config.swav.contrastive.criterion == "supcon":
+            contrastive_loss = ctx.contrastive_criterion(torch.stack([anchor_graph_encodings, graph_encodings[0], graph_encodings[1]], dim=1), labels=labels)
+        elif ctx.config.swav.contrastive.criterion == "simclr":
+            contrastive_loss = ctx.contrastive_criterion(torch.stack([anchor_graph_encodings, graph_encodings[0], graph_encodings[1]], dim=1))
         else:
-            raise ValueError(f"Unsupported contrastive criterion: {config.swav.contrastive.criterion}")
+            raise ValueError(f"Unsupported contrastive criterion: {ctx.config.swav.contrastive.criterion}")
 
     loss = (
-        config.hyper_parameters.lambdas.classification * ce_loss
-        + config.hyper_parameters.lambdas.projection * projection_loss
-        + config.hyper_parameters.lambdas.regularization * regularization_loss
-        + config.hyper_parameters.lambdas.swav * swav_loss
-        + config.hyper_parameters.lambdas.contrastive * contrastive_loss
+        ctx.config.hyper_parameters.lambdas.classification * ce_loss
+        + ctx.config.hyper_parameters.lambdas.projection * projection_loss
+        + ctx.config.hyper_parameters.lambdas.regularization * regularization_loss
+        + ctx.config.hyper_parameters.lambdas.swav * swav_loss
+        + ctx.config.hyper_parameters.lambdas.contrastive * contrastive_loss
     )
 
     metrics = {
@@ -258,14 +262,14 @@ def compute_training_loss(model, batched_graph):
     }
     return loss, metrics
 
-def run_training_step(model, optimizer, scaler, batched_graph, iteration, use_amp):
+def run_training_step(ctx: TrainingContext, model, optimizer, scaler, batched_graph, iteration):
     optimizer.zero_grad(set_to_none=True)
 
-    with torch.cuda.amp.autocast(enabled=use_amp):
-        loss, metrics = compute_training_loss(model, batched_graph)
+    with torch.cuda.amp.autocast(enabled=ctx.use_amp):
+        loss, metrics = compute_training_loss(ctx, model, batched_graph)
     scaler.scale(loss).backward()
     # cancel gradients for the prototypes
-    if iteration < config.swav.freeze_prototypes_niters:
+    if iteration < ctx.config.swav.freeze_prototypes_niters:
         for name, p in model.named_parameters():
             if "swav_prototypes" not in name:
                 continue
@@ -276,7 +280,7 @@ def run_training_step(model, optimizer, scaler, batched_graph, iteration, use_am
     del loss
     return metrics
 
-def train(train_loader, model, optimizer, scaler, epoch, lr_schedule, epoch_start_step, use_amp):
+def train(ctx: TrainingContext, train_loader, model, optimizer, scaler, epoch, lr_schedule, epoch_start_step):
     logging.info(f"Epoch {epoch + 1}")
     model.train()
     progress_bar = tqdm(train_loader, desc="Training")
@@ -299,12 +303,12 @@ def train(train_loader, model, optimizer, scaler, epoch, lr_schedule, epoch_star
             model.swav_prototypes.weight.copy_(w)
 
         batch_losses = run_training_step(
+            ctx,
             model,
             optimizer,
             scaler,
             batched_graph,
             iteration,
-            use_amp,
         )
 
         epoch_ce_losses.append(batch_losses["ce"])
@@ -323,15 +327,15 @@ def train(train_loader, model, optimizer, scaler, epoch, lr_schedule, epoch_star
         del batched_graph, batch_losses
 
     logging.info(f"Epoch {epoch + 1} - Cross-Entropy Loss: {np.mean(epoch_ce_losses):.4f}, Projection Loss: {np.mean(epoch_proj_losses):.4f}, Regularization Loss: {np.mean(epoch_reg_losses):.4f}, SwAV Loss: {np.mean(epoch_swav_losses):.4f}, Contrastive Loss: {np.mean(epoch_contrast_losses):.4f}")
-    ce_losses.append(float(np.mean(epoch_ce_losses)))
-    proj_losses.append(float(np.mean(epoch_proj_losses)))
-    reg_losses.append(float(np.mean(epoch_reg_losses)))
-    swav_losses.append(float(np.mean(epoch_swav_losses)))
-    contrast_losses.append(float(np.mean(epoch_contrast_losses)))
+    ctx.ce_losses.append(float(np.mean(epoch_ce_losses)))
+    ctx.proj_losses.append(float(np.mean(epoch_proj_losses)))
+    ctx.reg_losses.append(float(np.mean(epoch_reg_losses)))
+    ctx.swav_losses.append(float(np.mean(epoch_swav_losses)))
+    ctx.contrast_losses.append(float(np.mean(epoch_contrast_losses)))
 
     del train_loader
 
-def evaluate(model, val_loader):
+def evaluate(ctx: TrainingContext, model, val_loader):
     progress_bar = tqdm(val_loader, desc="Validation")
     model.eval()
     total_loss = 0
@@ -339,8 +343,9 @@ def evaluate(model, val_loader):
     all_labels = []
     with torch.no_grad():
         for batch in progress_bar:
-            labels = batch.labels.to(device, non_blocking=True)
+            labels = batch.labels.to(ctx.device, non_blocking=True)
             logits = forward_model(
+                ctx,
                 model,
                 batch.graphs,
                 forward_fn=model.forward_logits,
@@ -365,7 +370,7 @@ def evaluate(model, val_loader):
     
     return stats
 
-def test(model, test_loader):
+def test(ctx: TrainingContext, model, test_loader):
     progress_bar = tqdm(test_loader, desc="Testing")
     model.eval()
     total_loss = 0
@@ -373,8 +378,9 @@ def test(model, test_loader):
     all_labels = []
     with torch.no_grad():
         for batch in progress_bar:
-            labels = batch.labels.to(device, non_blocking=True)
+            labels = batch.labels.to(ctx.device, non_blocking=True)
             logits = forward_model(
+                ctx,
                 model,
                 batch.graphs,
                 forward_fn=model.forward_logits,
@@ -471,14 +477,21 @@ if __name__ == "__main__":
     vocab = Vocabulary.from_w2v(join(dataset_root, "w2v.wv"))
     vocab_size = vocab.get_vocab_size()
     pad_idx = vocab.get_pad_id()
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    use_amp = bool(config.hyper_parameters.get("use_amp", False)) and device.type == "cuda"
+    runtime_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    use_amp = bool(config.hyper_parameters.get("use_amp", False)) and runtime_device.type == "cuda"
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
-    logging.info(f"Device: {device}")
+    logging.info(f"Device: {runtime_device}")
     logging.info(f"AMP enabled: {use_amp}")
+    ctx = TrainingContext(
+        config=config,
+        device=runtime_device,
+        projection_criterion=None,
+        contrastive_criterion=None,
+        use_amp=use_amp,
+    )
 
     logging.info("Building model...")
-    model = GraphSwAVVD(config, vocab, vocab_size, pad_idx).to(device)
+    model = GraphSwAVVD(config, vocab, vocab_size, pad_idx).to(ctx.device)
     logging.info("Model building completed.")
 
     # if config.dataset.name == "BigVul":
@@ -536,18 +549,12 @@ if __name__ == "__main__":
         momentum=0.9,
         weight_decay=config.swav.wd
     )
-    lr_schedule = build_lr_schedule(num_samples)
-    epoch_start_steps = get_epoch_start_steps(num_samples)
+    lr_schedule = build_lr_schedule(ctx, num_samples)
+    epoch_start_steps = get_epoch_start_steps(ctx, num_samples)
 
-    contrastive_criterion = None
-    if is_contrastive_enabled():
-        contrastive_criterion = contrastive_options[config.swav.contrastive.criterion](temperature=config.swav.contrastive.temperature)
-    projection_criterion = OrthogonalProjectionLoss()
-
-    proj_losses = []
-    ce_losses = []
-    swav_losses = []
-    contrast_losses = []
+    if is_contrastive_enabled(ctx):
+        ctx.contrastive_criterion = contrastive_options[config.swav.contrastive.criterion](temperature=config.swav.contrastive.temperature)
+    ctx.projection_criterion = OrthogonalProjectionLoss()
 
     dataset_name = basename(config.dataset.name)
     # if dataset_name == "BigVul":
@@ -555,7 +562,7 @@ if __name__ == "__main__":
     gnn_name = gnn_name_map[config.gnn.name]
     nn_text = "ExcludeNN" if config.exclude_NNs else "IncludeNN"
     cl_warmup_text = "CLWarmup" if config.hyper_parameters.contrastive_warmup_epochs > 0 else "NoCLWarmup"
-    contrastive_text = "NoContrastive" if not is_contrastive_enabled() else config.swav.contrastive.criterion
+    contrastive_text = "NoContrastive" if not is_contrastive_enabled(ctx) else config.swav.contrastive.criterion
     do_swav = "NoSwAV" if config.hyper_parameters.lambdas.swav == 0.0 else "DoSwAV"
     gnn_attention_only = "GNNAttentionOnly" if config.gnn.attention_only else "GNNWithPooling"
     use_edge_attr = "WithEdgeAttr" if config.gnn.use_edge_attr else "NoEdgeAttr"
@@ -585,7 +592,7 @@ if __name__ == "__main__":
     data_module = SliceDataModule(
         config,
         vocab,
-        get_train_batch_size_for_epoch(0),
+        get_train_batch_size_for_epoch(ctx, 0),
         train_sampler=sampler,
         train_batch_sampler_factory=train_batch_sampler_factory,
         use_temp_data=args.use_temp_data,
@@ -593,9 +600,10 @@ if __name__ == "__main__":
     logging.info("Data module loading completed.")
     if not args.skip_training:
         for epoch in range(config.hyper_parameters.n_epochs):
-            data_module.set_train_batch_size(get_train_batch_size_for_epoch(epoch))
+            data_module.set_train_batch_size(get_train_batch_size_for_epoch(ctx, epoch))
             train_loader = data_module.train_dataloader()
             train(
+                ctx,
                 train_loader,
                 model,
                 optimizer,
@@ -603,9 +611,8 @@ if __name__ == "__main__":
                 epoch,
                 lr_schedule,
                 epoch_start_steps[epoch],
-                use_amp,
             )
-            eval_stats = evaluate(model, data_module.val_dataloader())
+            eval_stats = evaluate(ctx, model, data_module.val_dataloader())
             if eval_stats["f1"] > best_val_f1:
                 best_val_f1 = eval_stats["f1"]
                 torch.save(model.state_dict(), best_f1_checkpoint_path)
@@ -623,11 +630,11 @@ if __name__ == "__main__":
             if 'train' in cache_info:
                 print(f"Cache Info: {cache_info['train']}")
 
-        plt.plot(ce_losses, label='Cross-Entropy Loss')
-        plt.plot(proj_losses, label='Projection Loss')
-        plt.plot(reg_losses, label='Regularization Loss')
-        plt.plot(swav_losses, label='SwAV Loss')
-        plt.plot(contrast_losses, label='Contrastive Loss')
+        plt.plot(ctx.ce_losses, label='Cross-Entropy Loss')
+        plt.plot(ctx.proj_losses, label='Projection Loss')
+        plt.plot(ctx.reg_losses, label='Regularization Loss')
+        plt.plot(ctx.swav_losses, label='SwAV Loss')
+        plt.plot(ctx.contrast_losses, label='Contrastive Loss')
         plt.xlabel('Iteration')
         plt.ylabel('Loss')
         plt.legend()
@@ -637,7 +644,7 @@ if __name__ == "__main__":
         plt.close()
 
         logging.info("Testing model after training...")
-        test_stats = test(model, data_module.test_dataloader())
+        test_stats = test(ctx, model, data_module.test_dataloader())
         logging.info(f"Test Stats: {test_stats}")
         logging.info("Testing completed.")
 
@@ -646,8 +653,8 @@ if __name__ == "__main__":
     
     logging.info("Testing model with best validation F1...")
     require_checkpoint(best_f1_checkpoint_path, "Best validation F1")
-    model.load_state_dict(torch.load(best_f1_checkpoint_path, map_location=device))
-    test_stats = test(model, data_module.test_dataloader())
+    model.load_state_dict(torch.load(best_f1_checkpoint_path, map_location=ctx.device))
+    test_stats = test(ctx, model, data_module.test_dataloader())
     data_module.clear_cache()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -660,8 +667,8 @@ if __name__ == "__main__":
     
     logging.info("Testing model with best validation loss...")
     require_checkpoint(best_loss_checkpoint_path, "Best validation loss")
-    model.load_state_dict(torch.load(best_loss_checkpoint_path, map_location=device))
-    test_stats = test(model, data_module.test_dataloader())
+    model.load_state_dict(torch.load(best_loss_checkpoint_path, map_location=ctx.device))
+    test_stats = test(ctx, model, data_module.test_dataloader())
     
     data_module.clear_cache()
     if torch.cuda.is_available():
