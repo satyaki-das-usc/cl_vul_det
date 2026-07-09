@@ -410,23 +410,8 @@ def require_checkpoint(checkpoint_path: str, description: str):
             "Run training first, or use --skip_training only when the checkpoint already exists."
         )
 
-if __name__ == "__main__":
-    filter_warnings()
-    arg_parser = get_arg_parser()
-    arg_parser.add_argument("--skip_training", action='store_true', help="Skip training phase")
-    arg_parser.add_argument("--no_cl", action='store_true', help="Disable contrastive learning")
-    arg_parser.add_argument("--exclude_NNs", action='store_true', help="Exclude NN pairs if contrastive pair filtering is used")
-    arg_parser.add_argument("--use_lr_warmup", action='store_true', help="Enable learning-rate warmup in the config")
-    arg_parser.add_argument("--no_cl_warmup", action='store_true', help="Disable contrastive learning warmup in the config")
-    arg_parser.add_argument("--train_batch_size", type=int, default=None,
-                            help="Override all configured training batch sizes.")
-    arg_parser.add_argument("--test_batch_size", type=int, default=None,
-                            help="Override validation and test batch size.")
-
-    args = arg_parser.parse_args()
-
+def load_config_from_args(args) -> DictConfig:
     config = cast(DictConfig, OmegaConf.load(args.config))
-    seed_everything(config.seed, workers=True)
 
     if args.no_cl:
         OmegaConf.update(config, "swav.contrastive.enabled", False, force_add=True)
@@ -447,8 +432,10 @@ if __name__ == "__main__":
         if args.test_batch_size < 1:
             raise ValueError("--test_batch_size must be >= 1")
         config.hyper_parameters.test_batch_size = args.test_batch_size
-    init_log(splitext(basename(__file__))[0])
 
+    return config
+
+def log_cli_compatibility_warnings(args):
     if args.exclude_NNs:
         logging.warning(
             "--exclude_NNs is accepted for compatibility but this SwAV training script "
@@ -464,6 +451,26 @@ if __name__ == "__main__":
             "--no_cl_warmup sets hyper_parameters.contrastive_warmup_epochs to 0, but "
             "contrastive warmup is not implemented in this SwAV training loop."
         )
+
+if __name__ == "__main__":
+    filter_warnings()
+    arg_parser = get_arg_parser()
+    arg_parser.add_argument("--skip_training", action='store_true', help="Skip training phase")
+    arg_parser.add_argument("--no_cl", action='store_true', help="Disable contrastive learning")
+    arg_parser.add_argument("--exclude_NNs", action='store_true', help="Exclude NN pairs if contrastive pair filtering is used")
+    arg_parser.add_argument("--use_lr_warmup", action='store_true', help="Enable learning-rate warmup in the config")
+    arg_parser.add_argument("--no_cl_warmup", action='store_true', help="Disable contrastive learning warmup in the config")
+    arg_parser.add_argument("--train_batch_size", type=int, default=None,
+                            help="Override all configured training batch sizes.")
+    arg_parser.add_argument("--test_batch_size", type=int, default=None,
+                            help="Override validation and test batch size.")
+
+    args = arg_parser.parse_args()
+
+    config = load_config_from_args(args)
+    seed_everything(config.seed, workers=True)
+    init_log(splitext(basename(__file__))[0])
+    log_cli_compatibility_warnings(args)
 
     if config.num_workers != -1:
         USE_CPU = min(config.num_workers, cpu_count())
