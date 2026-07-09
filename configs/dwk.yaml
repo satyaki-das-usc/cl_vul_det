@@ -150,6 +150,7 @@ hyper_parameters:
     - 128
     - 128
   test_batch_size: 128
+  use_amp: true
   reload_dataloader: true
   clip_norm: 5
   val_every_step: 1.0

@@ -188,8 +188,9 @@ def compute_training_loss(model, batched_graph):
             raise ValueError(f"No valid SwAV assignment views for {num_views} augmented views.")
         for view_id in views_for_assign:
             with torch.no_grad():
-                out = output[view_id].detach()
-                q = assignment_functions[config.swav.assignment_protocol](out)
+                with torch.cuda.amp.autocast(enabled=False):
+                    out = output[view_id].detach().float()
+                    q = assignment_functions[config.swav.assignment_protocol](out)
             subloss = logits.new_zeros(())
             for v in np.delete(np.arange(num_views), view_id):
                 x = output[v] / config.swav.temperature
@@ -227,11 +228,12 @@ def compute_training_loss(model, batched_graph):
     }
     return loss, metrics
 
-def run_training_step(model, optimizer, batched_graph, iteration):
+def run_training_step(model, optimizer, scaler, batched_graph, iteration, use_amp):
     optimizer.zero_grad(set_to_none=True)
 
-    loss, metrics = compute_training_loss(model, batched_graph)
-    loss.backward()
+    with torch.cuda.amp.autocast(enabled=use_amp):
+        loss, metrics = compute_training_loss(model, batched_graph)
+    scaler.scale(loss).backward()
     # cancel gradients for the prototypes
     if iteration < config.swav.freeze_prototypes_niters:
         for name, p in model.named_parameters():
@@ -239,11 +241,12 @@ def run_training_step(model, optimizer, batched_graph, iteration):
                 continue
             p.grad = None
 
-    optimizer.step()
+    scaler.step(optimizer)
+    scaler.update()
     del loss
     return metrics
 
-def train(train_loader, model, optimizer, epoch, lr_schedule, epoch_start_step):
+def train(train_loader, model, optimizer, scaler, epoch, lr_schedule, epoch_start_step, use_amp):
     logging.info(f"Epoch {epoch + 1}")
     model.train()
     progress_bar = tqdm(train_loader, desc="Training")
@@ -268,8 +271,10 @@ def train(train_loader, model, optimizer, epoch, lr_schedule, epoch_start_step):
         batch_losses = run_training_step(
             model,
             optimizer,
+            scaler,
             batched_graph,
             iteration,
+            use_amp,
         )
 
         epoch_ce_losses.append(batch_losses["ce"])
@@ -437,6 +442,10 @@ if __name__ == "__main__":
     vocab_size = vocab.get_vocab_size()
     pad_idx = vocab.get_pad_id()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    use_amp = bool(config.hyper_parameters.get("use_amp", False)) and device.type == "cuda"
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    logging.info(f"Device: {device}")
+    logging.info(f"AMP enabled: {use_amp}")
 
     logging.info("Building model...")
     model = GraphSwAVVD(config, vocab, vocab_size, pad_idx).to(device)
@@ -555,9 +564,11 @@ if __name__ == "__main__":
                 train_loader,
                 model,
                 optimizer,
+                scaler,
                 epoch,
                 lr_schedule,
                 epoch_start_steps[epoch],
+                use_amp,
             )
             eval_stats = evaluate(model, data_module.val_dataloader())
             if eval_stats["f1"] > best_val_f1:
