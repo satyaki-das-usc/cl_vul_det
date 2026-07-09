@@ -5,7 +5,7 @@ from os.path import join
 from multiprocessing import cpu_count
 
 from omegaconf import DictConfig
-from typing import List, Optional
+from typing import Callable, List, Optional
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
 
@@ -14,11 +14,21 @@ from src.torch_data.datasets import SliceDataset
 from src.torch_data.samples import SliceGraphSample, SliceGraphBatch
 
 class SliceDataModule(LightningDataModule):
-    def __init__(self, config: DictConfig, vocab: Vocabulary, train_batch_size, train_sampler=None, use_temp_data: bool = False):
+    def __init__(
+            self,
+            config: DictConfig,
+            vocab: Vocabulary,
+            train_batch_size,
+            train_sampler=None,
+            train_batch_sampler_factory: Optional[Callable[[int], object]] = None,
+            use_temp_data: bool = False):
         super().__init__()
+        if train_sampler is not None and train_batch_sampler_factory is not None:
+            raise ValueError("train_sampler and train_batch_sampler_factory cannot both be set.")
         self.__vocab = vocab
         self.__config = config
         self.__train_sampler = train_sampler
+        self.__train_batch_sampler_factory = train_batch_sampler_factory
         self.__train_batch_size = train_batch_size
         self.__train_dataset = None
         self.__val_dataset = None
@@ -96,6 +106,14 @@ class SliceDataModule(LightningDataModule):
             return self.__train_loader
 
         self.__train_dataset = self.get_train_dataset()
+
+        if self.__train_batch_sampler_factory is not None:
+            self.__train_loader = DataLoader(
+                self.__train_dataset,
+                batch_sampler=self.__train_batch_sampler_factory(self.__train_batch_size),
+                **self.__dataloader_kwargs()
+            )
+            return self.__train_loader
 
         if self.__train_sampler:
             self.__train_loader = DataLoader(

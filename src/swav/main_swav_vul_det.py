@@ -29,6 +29,7 @@ from timm.optim.lars import Lars
 from src.common_utils import get_arg_parser, filter_warnings, init_log
 from src.vocabulary import Vocabulary
 from src.torch_data.datamodules import SliceDataModule
+from src.torch_data.samplers import BalancedBinaryBatchSampler
 from src.models.swav_vd import GraphSwAVVD
 from src.models.modules.losses import SupConLoss, InfoNCE, OrthogonalProjectionLoss
 from src.swav.assignment_protocols import sinkhorn, uot_sinkhorn_gpu
@@ -138,6 +139,35 @@ def build_lr_schedule(num_samples: int):
         for t in iters
     ])
     return np.concatenate((warmup_lr_schedule, cosine_lr_schedule))
+
+def load_train_dataset_stats(train_slices, train_stats_filepath):
+    if not exists(train_stats_filepath):
+        logging.info(f"{train_stats_filepath} not found. Retrieving labels...")
+        ys = []
+        for slice_path in tqdm(train_slices, desc=f"Slice files"):
+            with open(slice_path, "rb") as rbfi:
+                slice_graph: nx.DiGraph = pickle.load(rbfi)
+                ys.append(int(slice_graph.graph["label"]))
+
+        neg_cnt = ys.count(0)
+        pos_cnt = ys.count(1)
+        majority_cnt = max(neg_cnt, pos_cnt)
+        dataset_stats = {
+            "ys": ys,
+            "sampler_num_samples": majority_cnt * 2,
+            "neg_cnt": neg_cnt,
+            "pos_cnt": pos_cnt,
+        }
+        logging.info(f"Successfully retrieved {len(ys)} labels. Writing all stats to {train_stats_filepath}...")
+        with open(train_stats_filepath, "w") as wfi:
+            json.dump(dataset_stats, wfi, indent=2)
+        return dataset_stats
+
+    logging.info(f"Reading dataset stats from {train_stats_filepath}...")
+    with open(train_stats_filepath, "r") as rfi:
+        dataset_stats = json.load(rfi)
+    logging.info(f"Completed. Retrieved stats.")
+    return dataset_stats
 
 def build_all_views_batch(batched_graph):
     graphs = batched_graph.graphs.to_data_list()
@@ -460,41 +490,40 @@ if __name__ == "__main__":
         train_slices = json.load(rfi)
     logging.info(f"Completed. Loaded {len(train_slices)} slices.")
 
+    use_imbalanced_sampler = bool(config.hyper_parameters.get("use_imbalanced_sampler", False))
+    use_balanced_batch_sampler = bool(config.hyper_parameters.get("use_balanced_batch_sampler", False))
+    if use_imbalanced_sampler and use_balanced_batch_sampler:
+        raise ValueError("use_imbalanced_sampler and use_balanced_batch_sampler cannot both be enabled.")
+    if use_balanced_batch_sampler:
+        for batch_size in config.hyper_parameters.batch_sizes:
+            if int(batch_size) < 2 or int(batch_size) % 2 != 0:
+                raise ValueError(
+                    "use_balanced_batch_sampler requires all train batch sizes "
+                    f"to be even and >= 2, got {batch_size}."
+                )
+
     num_samples = len(train_slices)
     sampler = None
-    if config.hyper_parameters.use_imbalanced_sampler:
-        logging.info("Using Imbalanced Sampler for training data loader.")
-
+    train_batch_sampler_factory = None
+    if use_imbalanced_sampler or use_balanced_batch_sampler:
         train_stats_filepath = join(dataset_root, config.train_stats_filename)
-        ys = []
-        if not exists(train_stats_filepath):
-            logging.info(f"{train_stats_filepath} not found. Retriving labels...")
-            for slice_path in tqdm(train_slices, desc=f"Slice files"):
-                with open(slice_path, "rb") as rbfi:
-                    slice_graph: nx.DiGraph = pickle.load(rbfi)
-                    ys.append(slice_graph.graph["label"])
-            neg_cnt = ys.count(0)
-            pos_cnt = len(ys) - neg_cnt
-            majority_cnt = max(neg_cnt, pos_cnt)
-            sampler_num_samples = majority_cnt * 2
+        dataset_stats = load_train_dataset_stats(train_slices, train_stats_filepath)
+        num_samples = int(dataset_stats["sampler_num_samples"])
 
-            dataset_stats = {
-                "ys": ys,
-                "sampler_num_samples": sampler_num_samples,
-                "neg_cnt": neg_cnt,
-                "pos_cnt": pos_cnt,
-            }
-            logging.info(f"Successfully retrieved {len(ys)} labels. Writing all stats to {train_stats_filepath}...")
-            with open(train_stats_filepath, "w") as wfi:
-                json.dump(dataset_stats, wfi, indent=2)
+        if use_imbalanced_sampler:
+            logging.info("Using ImbalancedSampler for training data loader.")
+            sampler = ImbalancedSampler(
+                torch.tensor(dataset_stats["ys"], dtype=torch.long),
+                num_samples=num_samples,
+            )
         else:
-            logging.info(f"Reading dataset stats from {train_stats_filepath}...")
-            with open(train_stats_filepath, "r") as rfi:
-                dataset_stats = json.load(rfi)
-            logging.info(f"Completed. Retrieved stats.")
-
-        num_samples = dataset_stats["sampler_num_samples"]
-        sampler = ImbalancedSampler(torch.tensor(dataset_stats["ys"], dtype=torch.long), num_samples=num_samples)
+            logging.info("Using balanced batch sampler for training data loader.")
+            def train_batch_sampler_factory(batch_size):
+                return BalancedBinaryBatchSampler(
+                    labels=dataset_stats["ys"],
+                    batch_size=batch_size,
+                    seed=config.seed,
+                )
 
     # optimizer = torch.optim.AdamW([{
     #             "params": p
@@ -530,8 +559,13 @@ if __name__ == "__main__":
     do_swav = "NoSwAV" if config.hyper_parameters.lambdas.swav == 0.0 else "DoSwAV"
     gnn_attention_only = "GNNAttentionOnly" if config.gnn.attention_only else "GNNWithPooling"
     use_edge_attr = "WithEdgeAttr" if config.gnn.use_edge_attr else "NoEdgeAttr"
-    use_imbalanced_sampler = "WithImbalancedSampler" if config.hyper_parameters.use_imbalanced_sampler else "NoImbalancedSampler"
-    checkpoint_dir = join(config.model_save_dir, "graph_swav_classification", dataset_name, gnn_name, nn_text, cl_warmup_text, do_swav, contrastive_text, gnn_attention_only, use_edge_attr, use_imbalanced_sampler)
+    if use_balanced_batch_sampler:
+        sampler_text = "WithBalancedBatchSampler"
+    elif use_imbalanced_sampler:
+        sampler_text = "WithImbalancedSampler"
+    else:
+        sampler_text = "NoSampler"
+    checkpoint_dir = join(config.model_save_dir, "graph_swav_classification", dataset_name, gnn_name, nn_text, cl_warmup_text, do_swav, contrastive_text, gnn_attention_only, use_edge_attr, sampler_text)
     if not exists(checkpoint_dir):
         os.makedirs(checkpoint_dir, exist_ok=True)
     model_name = model.__class__.__name__
@@ -553,6 +587,7 @@ if __name__ == "__main__":
         vocab,
         get_train_batch_size_for_epoch(0),
         train_sampler=sampler,
+        train_batch_sampler_factory=train_batch_sampler_factory,
         use_temp_data=args.use_temp_data,
     )
     logging.info("Data module loading completed.")
