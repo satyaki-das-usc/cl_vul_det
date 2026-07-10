@@ -271,7 +271,7 @@ def compute_training_loss(ctx: TrainingContext, model, batched_graph):
             raise ValueError(f"No valid SwAV assignment views for {num_views} augmented views.")
         for view_id in views_for_assign:
             with torch.no_grad():
-                with torch.cuda.amp.autocast(enabled=False):
+                with torch.amp.autocast(ctx.device.type, enabled=False):
                     out = output[view_id].detach().float()
                     q = assignment_functions[ctx.config.swav.assignment_protocol](out)
             subloss = logits.new_zeros(())
@@ -314,7 +314,7 @@ def compute_training_loss(ctx: TrainingContext, model, batched_graph):
 def run_training_step(ctx: TrainingContext, model, optimizer, scaler, batched_graph, iteration):
     optimizer.zero_grad(set_to_none=True)
 
-    with torch.cuda.amp.autocast(enabled=ctx.use_amp):
+    with torch.amp.autocast(ctx.device.type, enabled=ctx.use_amp):
         loss, metrics = compute_training_loss(ctx, model, batched_graph)
     scaler.scale(loss).backward()
     # cancel gradients for the prototypes
@@ -509,7 +509,7 @@ def get_dataset_root(config: DictConfig, args) -> Path:
 def build_runtime_context(config: DictConfig):
     runtime_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     use_amp = bool(config.hyper_parameters.get("use_amp", False)) and runtime_device.type == "cuda"
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     logging.info(f"Device: {runtime_device}")
     logging.info(f"AMP enabled: {use_amp}")
     ctx = TrainingContext(
