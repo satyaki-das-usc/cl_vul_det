@@ -1,4 +1,3 @@
-import os
 import json
 
 import torch
@@ -15,7 +14,7 @@ import logging
 
 from dataclasses import dataclass, field
 from multiprocessing import cpu_count
-from os.path import join, splitext, basename, exists
+from pathlib import Path
 from omegaconf import DictConfig, OmegaConf
 from typing import List, Optional, cast
 from tqdm import tqdm
@@ -143,12 +142,12 @@ def build_lr_schedule(ctx: TrainingContext, num_samples: int):
     ])
     return np.concatenate((warmup_lr_schedule, cosine_lr_schedule))
 
-def load_train_dataset_stats(train_slices, train_stats_filepath):
-    if not exists(train_stats_filepath):
+def load_train_dataset_stats(train_slices, train_stats_filepath: Path):
+    if not train_stats_filepath.exists():
         logging.info(f"{train_stats_filepath} not found. Retrieving labels...")
         ys = []
         for slice_path in tqdm(train_slices, desc=f"Slice files"):
-            with open(slice_path, "rb") as rbfi:
+            with Path(slice_path).open("rb") as rbfi:
                 slice_graph: nx.DiGraph = pickle.load(rbfi)
                 ys.append(int(slice_graph.graph["label"]))
 
@@ -162,12 +161,12 @@ def load_train_dataset_stats(train_slices, train_stats_filepath):
             "pos_cnt": pos_cnt,
         }
         logging.info(f"Successfully retrieved {len(ys)} labels. Writing all stats to {train_stats_filepath}...")
-        with open(train_stats_filepath, "w") as wfi:
+        with train_stats_filepath.open("w") as wfi:
             json.dump(dataset_stats, wfi, indent=2)
         return dataset_stats
 
     logging.info(f"Reading dataset stats from {train_stats_filepath}...")
-    with open(train_stats_filepath, "r") as rfi:
+    with train_stats_filepath.open("r") as rfi:
         dataset_stats = json.load(rfi)
     logging.info(f"Completed. Retrieved stats.")
     return dataset_stats
@@ -403,8 +402,8 @@ def test(ctx: TrainingContext, model, test_loader):
     
     return stats
 
-def require_checkpoint(checkpoint_path: str, description: str):
-    if not exists(checkpoint_path):
+def require_checkpoint(checkpoint_path: Path, description: str):
+    if not checkpoint_path.exists():
         raise FileNotFoundError(
             f"{description} checkpoint not found at {checkpoint_path}. "
             "Run training first, or use --skip_training only when the checkpoint already exists."
@@ -452,6 +451,37 @@ def log_cli_compatibility_warnings(args):
             "contrastive warmup is not implemented in this SwAV training loop."
         )
 
+def get_dataset_root(config: DictConfig, args) -> Path:
+    if args.use_temp_data:
+        return Path(config.temp_root)
+    return Path(config.data_folder) / config.dataset.name
+
+def build_runtime_context(config: DictConfig):
+    runtime_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    use_amp = bool(config.hyper_parameters.get("use_amp", False)) and runtime_device.type == "cuda"
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    logging.info(f"Device: {runtime_device}")
+    logging.info(f"AMP enabled: {use_amp}")
+    ctx = TrainingContext(
+        config=config,
+        device=runtime_device,
+        projection_criterion=None,
+        contrastive_criterion=None,
+        use_amp=use_amp,
+    )
+    return ctx, scaler
+
+def load_vocab_and_model(ctx: TrainingContext, dataset_root: Path):
+    vocab = Vocabulary.from_w2v(str(dataset_root / "w2v.wv"))
+    vocab_size = vocab.get_vocab_size()
+    pad_idx = vocab.get_pad_id()
+
+    logging.info("Building model...")
+    model = GraphSwAVVD(ctx.config, vocab, vocab_size, pad_idx).to(ctx.device)
+    logging.info("Model building completed.")
+
+    return vocab, model
+
 if __name__ == "__main__":
     filter_warnings()
     arg_parser = get_arg_parser()
@@ -469,7 +499,7 @@ if __name__ == "__main__":
 
     config = load_config_from_args(args)
     seed_everything(config.seed, workers=True)
-    init_log(splitext(basename(__file__))[0])
+    init_log(Path(__file__).stem)
     log_cli_compatibility_warnings(args)
 
     if config.num_workers != -1:
@@ -477,36 +507,13 @@ if __name__ == "__main__":
     else:
         USE_CPU = cpu_count()
 
-    dataset_root = join(config.data_folder, config.dataset.name)
-    if args.use_temp_data:
-        dataset_root = config.temp_root
-    
-    vocab = Vocabulary.from_w2v(join(dataset_root, "w2v.wv"))
-    vocab_size = vocab.get_vocab_size()
-    pad_idx = vocab.get_pad_id()
-    runtime_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    use_amp = bool(config.hyper_parameters.get("use_amp", False)) and runtime_device.type == "cuda"
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
-    logging.info(f"Device: {runtime_device}")
-    logging.info(f"AMP enabled: {use_amp}")
-    ctx = TrainingContext(
-        config=config,
-        device=runtime_device,
-        projection_criterion=None,
-        contrastive_criterion=None,
-        use_amp=use_amp,
-    )
+    dataset_root = get_dataset_root(config, args)
+    ctx, scaler = build_runtime_context(config)
+    vocab, model = load_vocab_and_model(ctx, dataset_root)
 
-    logging.info("Building model...")
-    model = GraphSwAVVD(config, vocab, vocab_size, pad_idx).to(ctx.device)
-    logging.info("Model building completed.")
-
-    # if config.dataset.name == "BigVul":
-    #     train_slices_filepath = join(dataset_root, f"{config.dataset.version}_{config.train_slices_filename}")
-    # else:
-    train_slices_filepath = join(dataset_root, config.train_slices_filename)
+    train_slices_filepath = dataset_root / config.train_slices_filename
     logging.info(f"Loading training slice paths list from {train_slices_filepath}...")
-    with open(train_slices_filepath, "r") as rfi:
+    with train_slices_filepath.open("r") as rfi:
         train_slices = json.load(rfi)
     logging.info(f"Completed. Loaded {len(train_slices)} slices.")
 
@@ -526,7 +533,7 @@ if __name__ == "__main__":
     sampler = None
     train_batch_sampler_factory = None
     if use_imbalanced_sampler or use_balanced_batch_sampler:
-        train_stats_filepath = join(dataset_root, config.train_stats_filename)
+        train_stats_filepath = dataset_root / config.train_stats_filename
         dataset_stats = load_train_dataset_stats(train_slices, train_stats_filepath)
         num_samples = int(dataset_stats["sampler_num_samples"])
 
@@ -563,9 +570,7 @@ if __name__ == "__main__":
         ctx.contrastive_criterion = contrastive_options[config.swav.contrastive.criterion](temperature=config.swav.contrastive.temperature)
     ctx.projection_criterion = OrthogonalProjectionLoss()
 
-    dataset_name = basename(config.dataset.name)
-    # if dataset_name == "BigVul":
-    #     dataset_name = join(dataset_name, config.dataset.version)
+    dataset_name = Path(config.dataset.name).name
     gnn_name = gnn_name_map[config.gnn.name]
     nn_text = "ExcludeNN" if config.exclude_NNs else "IncludeNN"
     cl_warmup_text = "CLWarmup" if config.hyper_parameters.contrastive_warmup_epochs > 0 else "NoCLWarmup"
@@ -579,18 +584,27 @@ if __name__ == "__main__":
         sampler_text = "WithImbalancedSampler"
     else:
         sampler_text = "NoSampler"
-    checkpoint_dir = join(config.model_save_dir, "graph_swav_classification", dataset_name, gnn_name, nn_text, cl_warmup_text, do_swav, contrastive_text, gnn_attention_only, use_edge_attr, sampler_text)
-    if not exists(checkpoint_dir):
-        os.makedirs(checkpoint_dir, exist_ok=True)
+    checkpoint_dir = (
+        Path(config.model_save_dir)
+        / "graph_swav_classification"
+        / dataset_name
+        / gnn_name
+        / nn_text
+        / cl_warmup_text
+        / do_swav
+        / contrastive_text
+        / gnn_attention_only
+        / use_edge_attr
+        / sampler_text
+    )
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
     model_name = model.__class__.__name__
-    best_f1_directory = join(checkpoint_dir, "best_f1")
-    if not exists(best_f1_directory):
-        os.makedirs(best_f1_directory, exist_ok=True)
-    best_f1_checkpoint_path = join(best_f1_directory, f"{model_name}.ckpt")
-    best_loss_directory = join(checkpoint_dir, "best_loss")
-    if not exists(best_loss_directory):
-        os.makedirs(best_loss_directory, exist_ok=True)
-    best_loss_checkpoint_path = join(best_loss_directory, f"{model_name}.ckpt")
+    best_f1_directory = checkpoint_dir / "best_f1"
+    best_f1_directory.mkdir(parents=True, exist_ok=True)
+    best_f1_checkpoint_path = best_f1_directory / f"{model_name}.ckpt"
+    best_loss_directory = checkpoint_dir / "best_loss"
+    best_loss_directory.mkdir(parents=True, exist_ok=True)
+    best_loss_checkpoint_path = best_loss_directory / f"{model_name}.ckpt"
     logging.info(f"Checkpoint directory: {checkpoint_dir}")
     
     best_val_f1 = -1.0
@@ -647,7 +661,7 @@ if __name__ == "__main__":
         plt.legend()
         plt.grid(True)
         plt.title('Training Loss Convergence')
-        plt.savefig(join(checkpoint_dir, 'training_losses.png'), bbox_inches='tight')
+        plt.savefig(checkpoint_dir / 'training_losses.png', bbox_inches='tight')
         plt.close()
 
         logging.info("Testing model after training...")
@@ -655,7 +669,7 @@ if __name__ == "__main__":
         logging.info(f"Test Stats: {test_stats}")
         logging.info("Testing completed.")
 
-        with open(join(checkpoint_dir, "test_statistics_epoch100.json"), "w") as wfi:
+        with (checkpoint_dir / "test_statistics_epoch100.json").open("w") as wfi:
             json.dump(test_stats, wfi, indent=4)
     
     logging.info("Testing model with best validation F1...")
@@ -669,7 +683,7 @@ if __name__ == "__main__":
     gc.collect()
     logging.info(f"Test Stats: {test_stats}")
     logging.info("Testing completed.")
-    with open(join(checkpoint_dir, "test_statistics_best_val_f1.json"), "w") as wfi:
+    with (checkpoint_dir / "test_statistics_best_val_f1.json").open("w") as wfi:
         json.dump(test_stats, wfi, indent=4)
     
     logging.info("Testing model with best validation loss...")
@@ -685,7 +699,7 @@ if __name__ == "__main__":
 
     logging.info(f"Test Stats: {test_stats}")
     logging.info("Testing completed.")
-    with open(join(checkpoint_dir, "test_statistics_best_val_loss.json"), "w") as wfi:
+    with (checkpoint_dir / "test_statistics_best_val_loss.json").open("w") as wfi:
         json.dump(test_stats, wfi, indent=4)
     
     logging.info(f"Completed.")
