@@ -13,7 +13,6 @@ import matplotlib.pyplot as plt
 import logging
 
 from dataclasses import dataclass, field
-from multiprocessing import cpu_count
 from pathlib import Path
 from omegaconf import DictConfig, OmegaConf
 from typing import List, Optional, cast
@@ -532,9 +531,8 @@ def load_vocab_and_model(ctx: TrainingContext, dataset_root: Path):
 
     return vocab, model
 
-if __name__ == "__main__":
-    filter_warnings()
-    arg_parser = get_arg_parser()
+
+def add_swav_arguments(arg_parser):
     arg_parser.add_argument("--skip_training", action='store_true', help="Skip training phase")
     arg_parser.add_argument("--no_cl", action='store_true', help="Disable contrastive learning")
     arg_parser.add_argument("--exclude_NNs", action='store_true', help="Exclude NN pairs if contrastive pair filtering is used")
@@ -545,48 +543,32 @@ if __name__ == "__main__":
     arg_parser.add_argument("--test_batch_size", type=int, default=None,
                             help="Override validation and test batch size.")
 
-    args = arg_parser.parse_args()
 
-    config = load_config_from_args(args)
-    seed_everything(config.seed, workers=True)
-    init_log(Path(__file__).stem)
-    log_cli_compatibility_warnings(args)
-
-    if config.num_workers != -1:
-        USE_CPU = min(config.num_workers, cpu_count())
-    else:
-        USE_CPU = cpu_count()
-
-    dataset_root = get_dataset_root(config, args)
-    ctx, scaler = build_runtime_context(config)
-    vocab, model = load_vocab_and_model(ctx, dataset_root)
-
-    (
-        num_samples,
-        sampler,
-        train_batch_sampler_factory,
-        use_imbalanced_sampler,
-        use_balanced_batch_sampler,
-    ) = build_training_sampling(config, dataset_root)
-
-    # optimizer = torch.optim.AdamW([{
-    #             "params": p
-    #         } for p in model.parameters()], config.hyper_parameters.learning_rate)
-    
-    # Using LARS optimizer as per the SwAV paper
-    optimizer = Lars(
+def build_optimizer(config: DictConfig, model):
+    # Using LARS optimizer as per the SwAV paper.
+    return Lars(
         model.parameters(),
         lr=config.swav.base_lr,
         momentum=0.9,
         weight_decay=config.swav.wd
     )
-    lr_schedule = build_lr_schedule(ctx, num_samples)
-    epoch_start_steps = get_epoch_start_steps(ctx, num_samples)
 
+
+def initialize_loss_criteria(ctx: TrainingContext):
     if is_contrastive_enabled(ctx):
-        ctx.contrastive_criterion = contrastive_options[config.swav.contrastive.criterion](temperature=config.swav.contrastive.temperature)
+        ctx.contrastive_criterion = contrastive_options[ctx.config.swav.contrastive.criterion](
+            temperature=ctx.config.swav.contrastive.temperature
+        )
     ctx.projection_criterion = OrthogonalProjectionLoss()
 
+
+def build_checkpoint_paths(
+        ctx: TrainingContext,
+        model,
+        use_imbalanced_sampler: bool,
+        use_balanced_batch_sampler: bool,
+):
+    config = ctx.config
     dataset_name = Path(config.dataset.name).name
     gnn_name = gnn_name_map[config.gnn.name]
     nn_text = "ExcludeNN" if config.exclude_NNs else "IncludeNN"
@@ -595,12 +577,14 @@ if __name__ == "__main__":
     do_swav = "NoSwAV" if config.hyper_parameters.lambdas.swav == 0.0 else "DoSwAV"
     gnn_attention_only = "GNNAttentionOnly" if config.gnn.attention_only else "GNNWithPooling"
     use_edge_attr = "WithEdgeAttr" if config.gnn.use_edge_attr else "NoEdgeAttr"
+
     if use_balanced_batch_sampler:
         sampler_text = "WithBalancedBatchSampler"
     elif use_imbalanced_sampler:
         sampler_text = "WithImbalancedSampler"
     else:
         sampler_text = "NoSampler"
+
     checkpoint_dir = (
         Path(config.model_save_dir)
         / "graph_swav_classification"
@@ -615,17 +599,234 @@ if __name__ == "__main__":
         / sampler_text
     )
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
     model_name = model.__class__.__name__
     best_f1_directory = checkpoint_dir / "best_f1"
     best_f1_directory.mkdir(parents=True, exist_ok=True)
     best_f1_checkpoint_path = best_f1_directory / f"{model_name}.ckpt"
+
     best_loss_directory = checkpoint_dir / "best_loss"
     best_loss_directory.mkdir(parents=True, exist_ok=True)
     best_loss_checkpoint_path = best_loss_directory / f"{model_name}.ckpt"
+
     logging.info(f"Checkpoint directory: {checkpoint_dir}")
-    
+    return checkpoint_dir, best_f1_checkpoint_path, best_loss_checkpoint_path
+
+
+def release_memory():
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+
+
+def train_and_evaluate_epoch(
+        ctx: TrainingContext,
+        data_module: SliceDataModule,
+        model,
+        optimizer,
+        scaler,
+        epoch: int,
+        lr_schedule,
+        epoch_start_step: int,
+):
+    data_module.set_train_batch_size(get_train_batch_size_for_epoch(ctx, epoch))
+    train_loader = data_module.train_dataloader()
+    train(
+        ctx,
+        train_loader,
+        model,
+        optimizer,
+        scaler,
+        epoch,
+        lr_schedule,
+        epoch_start_step,
+    )
+
+    eval_stats = evaluate(ctx, model, data_module.val_dataloader())
+    release_memory()
+
+    cache_info = data_module.get_cache_info()
+    if 'train' in cache_info:
+        print(f"Cache Info: {cache_info['train']}")
+
+    return eval_stats
+
+
+def update_best_checkpoints(
+        model,
+        eval_stats,
+        best_val_f1: float,
+        best_val_loss: float,
+        best_f1_checkpoint_path: Path,
+        best_loss_checkpoint_path: Path,
+):
+    if eval_stats["f1"] > best_val_f1:
+        best_val_f1 = eval_stats["f1"]
+        torch.save(model.state_dict(), best_f1_checkpoint_path)
+        logging.info(f"New best model saved with F1: {best_val_f1:.4f}")
+
+    if eval_stats["eval_loss"] < best_val_loss:
+        best_val_loss = eval_stats["eval_loss"]
+        torch.save(model.state_dict(), best_loss_checkpoint_path)
+        logging.info(f"New best model saved with Loss: {best_val_loss:.4f}")
+
+    return best_val_f1, best_val_loss
+
+
+def run_training_epochs(
+        ctx: TrainingContext,
+        data_module: SliceDataModule,
+        model,
+        optimizer,
+        scaler,
+        lr_schedule,
+        epoch_start_steps,
+        best_f1_checkpoint_path: Path,
+        best_loss_checkpoint_path: Path,
+):
     best_val_f1 = -1.0
     best_val_loss = float('inf')
+
+    for epoch in range(ctx.config.hyper_parameters.n_epochs):
+        eval_stats = train_and_evaluate_epoch(
+            ctx,
+            data_module,
+            model,
+            optimizer,
+            scaler,
+            epoch,
+            lr_schedule,
+            epoch_start_steps[epoch],
+        )
+        best_val_f1, best_val_loss = update_best_checkpoints(
+            model,
+            eval_stats,
+            best_val_f1,
+            best_val_loss,
+            best_f1_checkpoint_path,
+            best_loss_checkpoint_path,
+        )
+
+
+def plot_training_losses(ctx: TrainingContext, checkpoint_dir: Path):
+    plt.plot(ctx.ce_losses, label='Cross-Entropy Loss')
+    plt.plot(ctx.proj_losses, label='Projection Loss')
+    plt.plot(ctx.reg_losses, label='Regularization Loss')
+    plt.plot(ctx.swav_losses, label='SwAV Loss')
+    plt.plot(ctx.contrast_losses, label='Contrastive Loss')
+    plt.xlabel('Iteration')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+    plt.title('Training Loss Convergence')
+    plt.savefig(checkpoint_dir / 'training_losses.png', bbox_inches='tight')
+    plt.close()
+
+
+def run_test_and_save(
+        ctx: TrainingContext,
+        model,
+        data_module: SliceDataModule,
+        checkpoint_dir: Path,
+        output_filename: str,
+        log_message: str,
+        checkpoint_path: Optional[Path] = None,
+        checkpoint_description: Optional[str] = None,
+        clear_cache: bool = False,
+):
+    logging.info(log_message)
+    if checkpoint_path is not None:
+        require_checkpoint(checkpoint_path, checkpoint_description or log_message)
+        model.load_state_dict(torch.load(checkpoint_path, map_location=ctx.device))
+
+    test_stats = test(ctx, model, data_module.test_dataloader())
+    if clear_cache:
+        data_module.clear_cache()
+        release_memory()
+
+    logging.info(f"Test Stats: {test_stats}")
+    logging.info("Testing completed.")
+    with (checkpoint_dir / output_filename).open("w") as wfi:
+        json.dump(test_stats, wfi, indent=4)
+
+
+def run_final_testing(
+        ctx: TrainingContext,
+        model,
+        data_module: SliceDataModule,
+        checkpoint_dir: Path,
+        best_f1_checkpoint_path: Path,
+        best_loss_checkpoint_path: Path,
+        include_current_model: bool,
+):
+    if include_current_model:
+        run_test_and_save(
+            ctx,
+            model,
+            data_module,
+            checkpoint_dir,
+            "test_statistics_epoch100.json",
+            "Testing model after training...",
+        )
+
+    run_test_and_save(
+        ctx,
+        model,
+        data_module,
+        checkpoint_dir,
+        "test_statistics_best_val_f1.json",
+        "Testing model with best validation F1...",
+        checkpoint_path=best_f1_checkpoint_path,
+        checkpoint_description="Best validation F1",
+        clear_cache=True,
+    )
+
+    run_test_and_save(
+        ctx,
+        model,
+        data_module,
+        checkpoint_dir,
+        "test_statistics_best_val_loss.json",
+        "Testing model with best validation loss...",
+        checkpoint_path=best_loss_checkpoint_path,
+        checkpoint_description="Best validation loss",
+        clear_cache=True,
+    )
+
+
+def main(config: DictConfig, args):
+    seed_everything(config.seed, workers=True)
+    init_log(Path(__file__).stem)
+    log_cli_compatibility_warnings(args)
+
+    dataset_root = get_dataset_root(config, args)
+    ctx, scaler = build_runtime_context(config)
+    vocab, model = load_vocab_and_model(ctx, dataset_root)
+
+    (
+        num_samples,
+        sampler,
+        train_batch_sampler_factory,
+        use_imbalanced_sampler,
+        use_balanced_batch_sampler,
+    ) = build_training_sampling(config, dataset_root)
+
+    optimizer = build_optimizer(config, model)
+    lr_schedule = build_lr_schedule(ctx, num_samples)
+    epoch_start_steps = get_epoch_start_steps(ctx, num_samples)
+    initialize_loss_criteria(ctx)
+
+    (
+        checkpoint_dir,
+        best_f1_checkpoint_path,
+        best_loss_checkpoint_path,
+    ) = build_checkpoint_paths(
+        ctx,
+        model,
+        use_imbalanced_sampler,
+        use_balanced_batch_sampler,
+    )
+
     logging.info("Loading data module...")
     data_module = SliceDataModule(
         config,
@@ -636,89 +837,40 @@ if __name__ == "__main__":
         use_temp_data=args.use_temp_data,
     )
     logging.info("Data module loading completed.")
+
     if not args.skip_training:
-        for epoch in range(config.hyper_parameters.n_epochs):
-            data_module.set_train_batch_size(get_train_batch_size_for_epoch(ctx, epoch))
-            train_loader = data_module.train_dataloader()
-            train(
-                ctx,
-                train_loader,
-                model,
-                optimizer,
-                scaler,
-                epoch,
-                lr_schedule,
-                epoch_start_steps[epoch],
-            )
-            eval_stats = evaluate(ctx, model, data_module.val_dataloader())
-            if eval_stats["f1"] > best_val_f1:
-                best_val_f1 = eval_stats["f1"]
-                torch.save(model.state_dict(), best_f1_checkpoint_path)
-                logging.info(f"New best model saved with F1: {best_val_f1:.4f}")
-            if eval_stats["eval_loss"] < best_val_loss:
-                best_val_loss = eval_stats["eval_loss"]
-                torch.save(model.state_dict(), best_loss_checkpoint_path)
-                logging.info(f"New best model saved with Loss: {best_val_loss:.4f}")
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+        run_training_epochs(
+            ctx,
+            data_module,
+            model,
+            optimizer,
+            scaler,
+            lr_schedule,
+            epoch_start_steps,
+            best_f1_checkpoint_path,
+            best_loss_checkpoint_path,
+        )
+        plot_training_losses(ctx, checkpoint_dir)
 
-            gc.collect()
+    run_final_testing(
+        ctx,
+        model,
+        data_module,
+        checkpoint_dir,
+        best_f1_checkpoint_path,
+        best_loss_checkpoint_path,
+        include_current_model=not args.skip_training,
+    )
 
-            cache_info = data_module.get_cache_info()
-            if 'train' in cache_info:
-                print(f"Cache Info: {cache_info['train']}")
-
-        plt.plot(ctx.ce_losses, label='Cross-Entropy Loss')
-        plt.plot(ctx.proj_losses, label='Projection Loss')
-        plt.plot(ctx.reg_losses, label='Regularization Loss')
-        plt.plot(ctx.swav_losses, label='SwAV Loss')
-        plt.plot(ctx.contrast_losses, label='Contrastive Loss')
-        plt.xlabel('Iteration')
-        plt.ylabel('Loss')
-        plt.legend()
-        plt.grid(True)
-        plt.title('Training Loss Convergence')
-        plt.savefig(checkpoint_dir / 'training_losses.png', bbox_inches='tight')
-        plt.close()
-
-        logging.info("Testing model after training...")
-        test_stats = test(ctx, model, data_module.test_dataloader())
-        logging.info(f"Test Stats: {test_stats}")
-        logging.info("Testing completed.")
-
-        with (checkpoint_dir / "test_statistics_epoch100.json").open("w") as wfi:
-            json.dump(test_stats, wfi, indent=4)
-    
-    logging.info("Testing model with best validation F1...")
-    require_checkpoint(best_f1_checkpoint_path, "Best validation F1")
-    model.load_state_dict(torch.load(best_f1_checkpoint_path, map_location=ctx.device))
-    test_stats = test(ctx, model, data_module.test_dataloader())
-    data_module.clear_cache()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-    gc.collect()
-    logging.info(f"Test Stats: {test_stats}")
-    logging.info("Testing completed.")
-    with (checkpoint_dir / "test_statistics_best_val_f1.json").open("w") as wfi:
-        json.dump(test_stats, wfi, indent=4)
-    
-    logging.info("Testing model with best validation loss...")
-    require_checkpoint(best_loss_checkpoint_path, "Best validation loss")
-    model.load_state_dict(torch.load(best_loss_checkpoint_path, map_location=ctx.device))
-    test_stats = test(ctx, model, data_module.test_dataloader())
-    
-    data_module.clear_cache()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-    gc.collect()
-
-    logging.info(f"Test Stats: {test_stats}")
-    logging.info("Testing completed.")
-    with (checkpoint_dir / "test_statistics_best_val_loss.json").open("w") as wfi:
-        json.dump(test_stats, wfi, indent=4)
-    
     logging.info(f"Completed.")
     logging.info("=========End session=========")
     logging.shutdown()
+
+
+if __name__ == "__main__":
+    filter_warnings()
+    arg_parser = get_arg_parser()
+    add_swav_arguments(arg_parser)
+    args = arg_parser.parse_args()
+    config = load_config_from_args(args)
+    main(config, args)
