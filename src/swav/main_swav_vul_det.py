@@ -104,42 +104,54 @@ def get_train_steps_for_epoch(ctx: TrainingContext, epoch: int, num_samples: int
     batch_size = get_train_batch_size_for_epoch(ctx, epoch)
     return math.ceil(num_samples / batch_size)
 
-def get_epoch_start_steps(ctx: TrainingContext, num_samples: int):
-    epoch_start_steps = []
-    cumulative_steps = 0
-    for epoch in range(ctx.config.hyper_parameters.n_epochs):
-        epoch_start_steps.append(cumulative_steps)
-        cumulative_steps += get_train_steps_for_epoch(ctx, epoch, num_samples)
-    return epoch_start_steps
 
-def build_lr_schedule(ctx: TrainingContext, num_samples: int):
+def get_total_train_steps(ctx: TrainingContext, num_samples: int) -> int:
+    n_epochs = int(ctx.config.hyper_parameters.n_epochs)
+    return sum(
+        get_train_steps_for_epoch(ctx, epoch, num_samples)
+        for epoch in range(n_epochs)
+    )
+
+
+def get_warmup_train_steps(ctx: TrainingContext, num_samples: int) -> int:
     n_epochs = int(ctx.config.hyper_parameters.n_epochs)
     warmup_epochs = min(int(ctx.config.swav.warmup_epochs), n_epochs)
-    warmup_steps = sum(
+    return sum(
         get_train_steps_for_epoch(ctx, epoch, num_samples)
         for epoch in range(warmup_epochs)
     )
-    cosine_steps = sum(
-        get_train_steps_for_epoch(ctx, epoch, num_samples)
-        for epoch in range(warmup_epochs, n_epochs)
-    )
 
-    warmup_lr_schedule = np.linspace(
-        ctx.config.swav.start_warmup,
-        ctx.config.swav.base_lr,
-        warmup_steps,
-    )
-    if cosine_steps == 0:
-        return warmup_lr_schedule
 
-    iters = np.arange(cosine_steps)
-    cosine_lr_schedule = np.array([
-        ctx.config.swav.final_lr
-        + 0.5 * (ctx.config.swav.base_lr - ctx.config.swav.final_lr)
-        * (1 + math.cos(math.pi * t / cosine_steps))
-        for t in iters
-    ])
-    return np.concatenate((warmup_lr_schedule, cosine_lr_schedule))
+def build_lr_scheduler(ctx: TrainingContext, optimizer, num_samples: int):
+    warmup_steps = get_warmup_train_steps(ctx, num_samples)
+    total_steps = get_total_train_steps(ctx, num_samples)
+    cosine_steps = total_steps - warmup_steps
+
+    base_lr = float(ctx.config.swav.base_lr)
+    start_warmup = float(ctx.config.swav.start_warmup)
+    final_lr = float(ctx.config.swav.final_lr)
+    lr_normalizer = base_lr if base_lr != 0.0 else 1.0
+
+    def lr_lambda(step: int):
+        step = min(step, max(total_steps - 1, 0))
+
+        if warmup_steps > 0 and step < warmup_steps:
+            if warmup_steps == 1:
+                lr = start_warmup
+            else:
+                progress = step / (warmup_steps - 1)
+                lr = start_warmup + progress * (base_lr - start_warmup)
+        elif cosine_steps > 0:
+            t = step - warmup_steps
+            lr = final_lr + 0.5 * (base_lr - final_lr) * (
+                1 + math.cos(math.pi * t / cosine_steps)
+            )
+        else:
+            lr = base_lr
+
+        return lr / lr_normalizer
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
 def load_train_dataset_stats(train_slices, train_stats_filepath: Path):
     if not train_stats_filepath.exists():
@@ -310,14 +322,14 @@ def compute_training_loss(ctx: TrainingContext, model, batched_graph):
     }
     return loss, metrics
 
-def run_training_step(ctx: TrainingContext, model, optimizer, scaler, batched_graph, iteration):
+def run_training_step(ctx: TrainingContext, model, optimizer, scaler, batched_graph, training_step: int):
     optimizer.zero_grad(set_to_none=True)
 
     with torch.amp.autocast(ctx.device.type, enabled=ctx.use_amp):
         loss, metrics = compute_training_loss(ctx, model, batched_graph)
     scaler.scale(loss).backward()
     # cancel gradients for the prototypes
-    if iteration < ctx.config.swav.freeze_prototypes_niters:
+    if training_step < ctx.config.swav.freeze_prototypes_niters:
         for name, p in model.named_parameters():
             if "swav_prototypes" not in name:
                 continue
@@ -328,7 +340,7 @@ def run_training_step(ctx: TrainingContext, model, optimizer, scaler, batched_gr
     del loss
     return metrics
 
-def train(ctx: TrainingContext, train_loader, model, optimizer, scaler, epoch, lr_schedule, epoch_start_step):
+def train(ctx: TrainingContext, train_loader, model, optimizer, scaler, lr_scheduler, epoch, training_step: int):
     logging.info(f"Epoch {epoch + 1}")
     model.train()
     progress_bar = tqdm(train_loader, desc="Training")
@@ -339,12 +351,7 @@ def train(ctx: TrainingContext, train_loader, model, optimizer, scaler, epoch, l
     epoch_swav_losses = []
     epoch_contrast_losses = []
 
-    for it, batched_graph in enumerate(progress_bar):
-        # update learning rate
-        iteration = epoch_start_step + it
-        for param_group in optimizer.param_groups:
-            param_group["lr"] = lr_schedule[iteration]
-
+    for batched_graph in progress_bar:
         with torch.no_grad():
             w = model.swav_prototypes.weight.data.clone()
             w = F.normalize(w, dim=1, p=2)
@@ -356,8 +363,10 @@ def train(ctx: TrainingContext, train_loader, model, optimizer, scaler, epoch, l
             optimizer,
             scaler,
             batched_graph,
-            iteration,
+            training_step,
         )
+        lr_scheduler.step()
+        training_step += 1
 
         epoch_ce_losses.append(batch_losses["ce"])
         epoch_proj_losses.append(batch_losses["proj"])
@@ -382,6 +391,7 @@ def train(ctx: TrainingContext, train_loader, model, optimizer, scaler, epoch, l
     ctx.contrast_losses.append(float(np.mean(epoch_contrast_losses)))
 
     del train_loader
+    return training_step
 
 def evaluate(ctx: TrainingContext, model, val_loader):
     progress_bar = tqdm(val_loader, desc="Validation")
@@ -625,21 +635,21 @@ def train_and_evaluate_epoch(
         model,
         optimizer,
         scaler,
+        lr_scheduler,
         epoch: int,
-        lr_schedule,
-        epoch_start_step: int,
+        training_step: int,
 ):
     data_module.set_train_batch_size(get_train_batch_size_for_epoch(ctx, epoch))
     train_loader = data_module.train_dataloader()
-    train(
+    training_step = train(
         ctx,
         train_loader,
         model,
         optimizer,
         scaler,
+        lr_scheduler,
         epoch,
-        lr_schedule,
-        epoch_start_step,
+        training_step,
     )
 
     eval_stats = evaluate(ctx, model, data_module.val_dataloader())
@@ -649,7 +659,7 @@ def train_and_evaluate_epoch(
     if 'train' in cache_info:
         print(f"Cache Info: {cache_info['train']}")
 
-    return eval_stats
+    return eval_stats, training_step
 
 
 def update_best_checkpoints(
@@ -679,24 +689,24 @@ def run_training_epochs(
         model,
         optimizer,
         scaler,
-        lr_schedule,
-        epoch_start_steps,
+        lr_scheduler,
         best_f1_checkpoint_path: Path,
         best_loss_checkpoint_path: Path,
 ):
     best_val_f1 = -1.0
     best_val_loss = float('inf')
+    training_step = 0
 
     for epoch in range(ctx.config.hyper_parameters.n_epochs):
-        eval_stats = train_and_evaluate_epoch(
+        eval_stats, training_step = train_and_evaluate_epoch(
             ctx,
             data_module,
             model,
             optimizer,
             scaler,
+            lr_scheduler,
             epoch,
-            lr_schedule,
-            epoch_start_steps[epoch],
+            training_step,
         )
         best_val_f1, best_val_loss = update_best_checkpoints(
             model,
@@ -812,8 +822,7 @@ def main(config: DictConfig, args):
     ) = build_training_sampling(config, dataset_root)
 
     optimizer = build_optimizer(config, model)
-    lr_schedule = build_lr_schedule(ctx, num_samples)
-    epoch_start_steps = get_epoch_start_steps(ctx, num_samples)
+    lr_scheduler = build_lr_scheduler(ctx, optimizer, num_samples)
     initialize_loss_criteria(ctx)
 
     (
@@ -845,8 +854,7 @@ def main(config: DictConfig, args):
             model,
             optimizer,
             scaler,
-            lr_schedule,
-            epoch_start_steps,
+            lr_scheduler,
             best_f1_checkpoint_path,
             best_loss_checkpoint_path,
         )
