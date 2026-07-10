@@ -171,6 +171,56 @@ def load_train_dataset_stats(train_slices, train_stats_filepath: Path):
     logging.info(f"Completed. Retrieved stats.")
     return dataset_stats
 
+def build_training_sampling(config: DictConfig, dataset_root: Path):
+    train_slices_filepath = dataset_root / config.train_slices_filename
+    logging.info(f"Loading training slice paths list from {train_slices_filepath}...")
+    with train_slices_filepath.open("r") as rfi:
+        train_slices = json.load(rfi)
+    logging.info(f"Completed. Loaded {len(train_slices)} slices.")
+
+    use_imbalanced_sampler = bool(config.hyper_parameters.get("use_imbalanced_sampler", False))
+    use_balanced_batch_sampler = bool(config.hyper_parameters.get("use_balanced_batch_sampler", False))
+    if use_imbalanced_sampler and use_balanced_batch_sampler:
+        raise ValueError("use_imbalanced_sampler and use_balanced_batch_sampler cannot both be enabled.")
+    if use_balanced_batch_sampler:
+        for batch_size in config.hyper_parameters.batch_sizes:
+            if int(batch_size) < 2 or int(batch_size) % 2 != 0:
+                raise ValueError(
+                    "use_balanced_batch_sampler requires all train batch sizes "
+                    f"to be even and >= 2, got {batch_size}."
+                )
+
+    num_samples = len(train_slices)
+    sampler = None
+    train_batch_sampler_factory = None
+    if use_imbalanced_sampler or use_balanced_batch_sampler:
+        train_stats_filepath = dataset_root / config.train_stats_filename
+        dataset_stats = load_train_dataset_stats(train_slices, train_stats_filepath)
+        num_samples = int(dataset_stats["sampler_num_samples"])
+
+        if use_imbalanced_sampler:
+            logging.info("Using ImbalancedSampler for training data loader.")
+            sampler = ImbalancedSampler(
+                torch.tensor(dataset_stats["ys"], dtype=torch.long),
+                num_samples=num_samples,
+            )
+        else:
+            logging.info("Using balanced batch sampler for training data loader.")
+            def train_batch_sampler_factory(batch_size):
+                return BalancedBinaryBatchSampler(
+                    labels=dataset_stats["ys"],
+                    batch_size=batch_size,
+                    seed=config.seed,
+                )
+
+    return (
+        num_samples,
+        sampler,
+        train_batch_sampler_factory,
+        use_imbalanced_sampler,
+        use_balanced_batch_sampler,
+    )
+
 def build_all_views_batch(batched_graph):
     graphs = batched_graph.graphs.to_data_list()
     augmented_views = [
@@ -511,46 +561,13 @@ if __name__ == "__main__":
     ctx, scaler = build_runtime_context(config)
     vocab, model = load_vocab_and_model(ctx, dataset_root)
 
-    train_slices_filepath = dataset_root / config.train_slices_filename
-    logging.info(f"Loading training slice paths list from {train_slices_filepath}...")
-    with train_slices_filepath.open("r") as rfi:
-        train_slices = json.load(rfi)
-    logging.info(f"Completed. Loaded {len(train_slices)} slices.")
-
-    use_imbalanced_sampler = bool(config.hyper_parameters.get("use_imbalanced_sampler", False))
-    use_balanced_batch_sampler = bool(config.hyper_parameters.get("use_balanced_batch_sampler", False))
-    if use_imbalanced_sampler and use_balanced_batch_sampler:
-        raise ValueError("use_imbalanced_sampler and use_balanced_batch_sampler cannot both be enabled.")
-    if use_balanced_batch_sampler:
-        for batch_size in config.hyper_parameters.batch_sizes:
-            if int(batch_size) < 2 or int(batch_size) % 2 != 0:
-                raise ValueError(
-                    "use_balanced_batch_sampler requires all train batch sizes "
-                    f"to be even and >= 2, got {batch_size}."
-                )
-
-    num_samples = len(train_slices)
-    sampler = None
-    train_batch_sampler_factory = None
-    if use_imbalanced_sampler or use_balanced_batch_sampler:
-        train_stats_filepath = dataset_root / config.train_stats_filename
-        dataset_stats = load_train_dataset_stats(train_slices, train_stats_filepath)
-        num_samples = int(dataset_stats["sampler_num_samples"])
-
-        if use_imbalanced_sampler:
-            logging.info("Using ImbalancedSampler for training data loader.")
-            sampler = ImbalancedSampler(
-                torch.tensor(dataset_stats["ys"], dtype=torch.long),
-                num_samples=num_samples,
-            )
-        else:
-            logging.info("Using balanced batch sampler for training data loader.")
-            def train_batch_sampler_factory(batch_size):
-                return BalancedBinaryBatchSampler(
-                    labels=dataset_stats["ys"],
-                    batch_size=batch_size,
-                    seed=config.seed,
-                )
+    (
+        num_samples,
+        sampler,
+        train_batch_sampler_factory,
+        use_imbalanced_sampler,
+        use_balanced_batch_sampler,
+    ) = build_training_sampling(config, dataset_root)
 
     # optimizer = torch.optim.AdamW([{
     #             "params": p
