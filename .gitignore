@@ -15,7 +15,23 @@ saved_models/
 *.wv
 *.pyc
 *.zip
+*.csv
 *.tar.gz
+
+GraphSwAV
+MEMORY_OPTIMIZATION_CHANGES.md
+PERFORMANCE_OPTIMIZATION_SUMMARY.md
+TIMING_INSTRUMENTATION.md
+arm64_changes.patch
+cloud_migration_paths.txt
+data/self_control_edges.txt
+debug.txt
+deepwukong/
+duplicate_slices.txt
+files_by_size.txt
+git_status.txt
+model_metrics.xlsx
+temp/
 
 !data/sensi_api_map.json
 !data/sensi_api.json
