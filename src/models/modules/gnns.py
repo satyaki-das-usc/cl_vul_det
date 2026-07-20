@@ -2,11 +2,30 @@ from omegaconf import DictConfig
 import torch
 from torch_geometric.data import Batch
 from torch_geometric.nn import TopKPooling, GCNConv, GINConv, GINEConv, GATv2Conv, GatedGraphConv, GlobalAttention, BatchNorm, AttentionalAggregation
-from torch_geometric.utils import subgraph
+from torch_geometric.utils import scatter, softmax, subgraph
 import torch.nn.functional as F
 
 from src.vocabulary import Vocabulary
 from src.models.modules.common_layers import STEncoder
+
+
+class AttentionReadout(torch.nn.Module):
+    """Attention-weighted graph readout that also exposes node scores."""
+
+    def __init__(self, hidden_size: int):
+        super().__init__()
+        self.gate_nn = torch.nn.Linear(hidden_size, 1)
+
+    def forward(self, x: torch.Tensor, batch: torch.Tensor):
+        attention_logits = self.gate_nn(x).squeeze(-1)
+        attention_weights = softmax(attention_logits, batch)
+        graph_embeddings = scatter(
+            attention_weights.unsqueeze(-1) * x,
+            batch,
+            dim=0,
+            reduce="sum",
+        )
+        return graph_embeddings, attention_logits, attention_weights
 
 class GraphConvEncoder(torch.nn.Module):
     """
@@ -152,7 +171,7 @@ class GINEConvEncoder(torch.nn.Module):
             self.pools.append(TopKPooling(self.hidden, ratio=config.pooling_ratio))
             in_dim = self.hidden
 
-        self.global_att = AttentionalAggregation(torch.nn.Linear(self.hidden, 1))
+        self.global_att = AttentionReadout(self.hidden)
 
     def forward(self, batched_graph: Batch):
         x = self.encoder(batched_graph.x)
@@ -171,10 +190,11 @@ class GINEConvEncoder(torch.nn.Module):
             x, edge_index, edge_attr, batch, _, _ = pool(x, edge_index, edge_attr, batch)
             # TopKPooling returns pooled edge_attr — no need for manual subgraph()
 
-            out += self.global_att(x, batch)  # residual-summed graph vector
+            layer_out, _, _ = self.global_att(x, batch)
+            out += layer_out  # residual-summed graph vector
 
         if self.attention_only:
-            out = self.global_att(x, batch)
+            out, _, _ = self.global_att(x, batch)
         
         return out  # graph-level embeddings
 

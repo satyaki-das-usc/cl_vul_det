@@ -216,6 +216,7 @@ def _add_symbolized_node(graph: nx.DiGraph, node_name: str, sym_code: str, token
     graph.add_node(node_name)
     graph.nodes[node_name]["sym_code"] = sym_code
     graph.nodes[node_name]["code_sym_token"] = tokens or tokenize_code_line(sym_code, subtoken=False)
+    graph.nodes[node_name]["correspondence_id"] = -1
 
 def _is_array_or_arithmetic_node(node_data: dict) -> bool:
     if node_data.get("is_array_indexing") or node_data.get("is_arithmetic_op"):

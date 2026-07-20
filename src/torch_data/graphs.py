@@ -27,10 +27,16 @@ class SliceGraph:
     
     def __init_graph(self):
         self.tokens_list = []
+        self.correspondence_ids = []
         self.node_to_idx = {}
         for idx, n in enumerate(self.__slice_graph):
-            tokens = self.__slice_graph.nodes[n]["code_sym_token"]
+            node_data = self.__slice_graph.nodes[n]
+            if "correspondence_id" not in node_data:
+                node_data["correspondence_id"] = idx
+
+            tokens = node_data["code_sym_token"]
             self.tokens_list.append(tokens)
+            self.correspondence_ids.append(node_data["correspondence_id"])
             self.node_to_idx[f"{n}"] = idx
         
         self.__label = self.__slice_graph.graph["label"]
@@ -68,4 +74,9 @@ class SliceGraph:
                 # edge_index.append((self.node_to_idx[f"{v}"], self.node_to_idx[f"{u}"]))
                 # edge_attr.append((vocab.get_id(edge_type_map[data["label"]]), vocab.get_id(data["var"]) if "var" in data else vocab.get_pad_id()))
             
-        return Data(x=node_ids, edge_index=torch.tensor(edge_index, dtype=torch.long).t().contiguous(), edge_attr=torch.tensor(edge_attr, dtype=torch.long))
+        return Data(
+            x=node_ids,
+            edge_index=torch.tensor(edge_index, dtype=torch.long).t().contiguous(),
+            edge_attr=torch.tensor(edge_attr, dtype=torch.long),
+            correspondence_id=torch.tensor(self.correspondence_ids, dtype=torch.long),
+        )
