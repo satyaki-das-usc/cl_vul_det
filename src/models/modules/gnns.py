@@ -142,8 +142,10 @@ class GINEConvEncoder(torch.nn.Module):
         super(GINEConvEncoder, self).__init__()
         self.encoder = STEncoder(config, vocab, vocabulary_size, pad_idx)
         self.hidden = config.hidden_size
+        self.pad_idx = pad_idx
         self.attention_only = config.attention_only
         self.use_edge_attr = config.use_edge_attr
+        self.edge_feature_dim = 2 * config.embed_size
 
         # Build sequence of conv/pool layers with skip and gating
         self.convs = torch.nn.ModuleList()
@@ -158,7 +160,9 @@ class GINEConvEncoder(torch.nn.Module):
                     nn=torch.nn.Sequential(
                         torch.nn.Linear(in_dim, self.hidden),
                         torch.nn.ReLU()
-                    ), train_eps=config.train_eps
+                    ),
+                    train_eps=config.train_eps,
+                    edge_dim=self.edge_feature_dim,
                 )
             else:
                 conv_layer = GINConv(
@@ -173,12 +177,29 @@ class GINEConvEncoder(torch.nn.Module):
 
         self.global_att = AttentionReadout(self.hidden)
 
-    def forward(self, batched_graph: Batch):
+    def _encode_edge_attributes(self, edge_attr: torch.Tensor) -> torch.Tensor:
+        if edge_attr.dim() != 2 or edge_attr.size(1) != 2:
+            raise ValueError(
+                "Expected edge_attr with shape [num_edges, 2] containing "
+                f"[edge_type_id, variable_id], got {tuple(edge_attr.shape)}."
+            )
+
+        edge_token_embeddings = self.encoder.embed_tokens(edge_attr)
+        edge_type_embeddings = edge_token_embeddings[:, 0]
+        variable_embeddings = edge_token_embeddings[:, 1]
+        has_variable = edge_attr[:, 1] != self.pad_idx
+        variable_embeddings = variable_embeddings * has_variable.unsqueeze(-1)
+        return torch.cat([edge_type_embeddings, variable_embeddings], dim=-1)
+
+    def _encode_and_readout(self, batched_graph: Batch):
         x = self.encoder(batched_graph.x)
         edge_index, edge_attr, batch = batched_graph.edge_index, batched_graph.edge_attr, batched_graph.batch
-        edge_attr = self.encoder(edge_attr)
+        if self.use_edge_attr:
+            edge_attr = self._encode_edge_attributes(edge_attr)
 
         out = 0
+        attention_logits = None
+        attention_weights = None
         for conv, pool in zip(self.convs, self.pools):
             if self.use_edge_attr:
                 x = conv(x, edge_index, edge_attr)
@@ -190,11 +211,16 @@ class GINEConvEncoder(torch.nn.Module):
             x, edge_index, edge_attr, batch, _, _ = pool(x, edge_index, edge_attr, batch)
             # TopKPooling returns pooled edge_attr — no need for manual subgraph()
 
-            layer_out, _, _ = self.global_att(x, batch)
+            layer_out, attention_logits, attention_weights = self.global_att(x, batch)
             out += layer_out  # residual-summed graph vector
 
         if self.attention_only:
-            out, _, _ = self.global_att(x, batch)
+            out, attention_logits, attention_weights = self.global_att(x, batch)
+
+        return out, attention_logits, attention_weights
+
+    def forward(self, batched_graph: Batch):
+        out, _, _ = self._encode_and_readout(batched_graph)
         
         return out  # graph-level embeddings
 

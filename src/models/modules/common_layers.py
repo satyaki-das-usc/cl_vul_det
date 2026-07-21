@@ -128,6 +128,10 @@ class STEncoder(torch.nn.Module):
             w2v_weights[vocab.get_id(wd)] = torch.from_numpy(model[wd])
         self.__wd_embedding.weight.data.copy_(w2v_weights)
 
+    def embed_tokens(self, token_ids: torch.Tensor) -> torch.Tensor:
+        """Return the Word2Vec-initialized embeddings for token IDs."""
+        return self.__wd_embedding(token_ids)
+
     def forward(self, seq: torch.Tensor):
         """
 
@@ -138,7 +142,7 @@ class STEncoder(torch.nn.Module):
 
         """
         # [n nodes; max parts; embed dim]
-        wd_embedding = self.__wd_embedding(seq)
+        wd_embedding = self.embed_tokens(seq)
         # [n nodes; rnn hidden]
         node_embedding = self.__rnn_attn(wd_embedding, seq)
         return node_embedding
