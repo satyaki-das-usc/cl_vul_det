@@ -135,6 +135,7 @@ hyper_parameters:
     regularization: 0.01
     swav: 0.7
     contrastive: 0.7
+    attention_distribution: 1.0
   temperature: 0.2
   vector_length: 128
   n_epochs: 100

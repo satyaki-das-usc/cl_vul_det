@@ -201,6 +201,197 @@ class GINEConvEncoder(torch.nn.Module):
             for sample_id in range(batch_size)
         ]
 
+    @staticmethod
+    def _get_aligned_shared_attention(
+            attention_weights: torch.Tensor,
+            node_to_graph: torch.Tensor,
+            correspondence_id: torch.Tensor,
+            original_graph_id: int,
+            augmented_graph_id: int):
+        if attention_weights.dim() != 1:
+            raise ValueError(
+                "attention_weights must be one-dimensional, "
+                f"got shape {tuple(attention_weights.shape)}."
+            )
+
+        num_nodes = attention_weights.numel()
+        if node_to_graph.numel() != num_nodes:
+            raise ValueError(
+                "node_to_graph and attention_weights must describe the same "
+                f"number of nodes, got {node_to_graph.numel()} and {num_nodes}."
+            )
+        if correspondence_id.numel() != num_nodes:
+            raise ValueError(
+                "correspondence_id and attention_weights must describe the same "
+                f"number of nodes, got {correspondence_id.numel()} and {num_nodes}."
+            )
+
+        original_mask = node_to_graph == original_graph_id
+        augmented_mask = node_to_graph == augmented_graph_id
+        if not original_mask.any():
+            raise ValueError(f"Original graph {original_graph_id} has no nodes.")
+        if not augmented_mask.any():
+            raise ValueError(f"Augmented graph {augmented_graph_id} has no nodes.")
+
+        original_ids = correspondence_id[original_mask]
+        original_weights = attention_weights[original_mask]
+        if (original_ids < 0).any():
+            raise ValueError(
+                f"Original graph {original_graph_id} contains a negative "
+                "correspondence ID."
+            )
+
+        shared_augmented_mask = augmented_mask & (correspondence_id >= 0)
+        augmented_ids = correspondence_id[shared_augmented_mask]
+        augmented_weights = attention_weights[shared_augmented_mask]
+        if augmented_ids.numel() == 0:
+            raise ValueError(
+                f"Augmented graph {augmented_graph_id} has no shared original nodes."
+            )
+
+        if torch.unique(original_ids).numel() != original_ids.numel():
+            raise ValueError(
+                f"Original graph {original_graph_id} contains duplicate "
+                "correspondence IDs."
+            )
+        if torch.unique(augmented_ids).numel() != augmented_ids.numel():
+            raise ValueError(
+                f"Augmented graph {augmented_graph_id} contains duplicate "
+                "correspondence IDs."
+            )
+
+        original_order = torch.argsort(original_ids)
+        augmented_order = torch.argsort(augmented_ids)
+        original_ids = original_ids[original_order]
+        augmented_ids = augmented_ids[augmented_order]
+        original_weights = original_weights[original_order]
+        augmented_weights = augmented_weights[augmented_order]
+
+        if not torch.equal(original_ids, augmented_ids):
+            raise ValueError(
+                f"Original graph {original_graph_id} and augmented graph "
+                f"{augmented_graph_id} do not contain the same correspondence IDs."
+            )
+
+        return original_weights, augmented_weights
+
+    @staticmethod
+    def _normalize_attention_distribution(
+            attention_weights: torch.Tensor) -> torch.Tensor:
+        if attention_weights.dim() != 1:
+            raise ValueError(
+                "attention_weights must be one-dimensional, "
+                f"got shape {tuple(attention_weights.shape)}."
+            )
+        if attention_weights.numel() == 0:
+            raise ValueError("Cannot normalize an empty attention distribution.")
+
+        attention_weights = attention_weights.float()
+        total_attention = attention_weights.sum()
+        if not torch.isfinite(total_attention) or total_attention <= 0:
+            raise ValueError(
+                "Attention distribution must have finite, positive total mass."
+            )
+
+        return attention_weights / total_attention
+
+    def _prepare_attention_distributions(
+            self,
+            attention_weights: torch.Tensor,
+            node_to_graph: torch.Tensor,
+            correspondence_id: torch.Tensor,
+            original_graph_id: int,
+            augmented_graph_id: int):
+        original_attention, augmented_attention = (
+            self._get_aligned_shared_attention(
+                attention_weights=attention_weights,
+                node_to_graph=node_to_graph,
+                correspondence_id=correspondence_id,
+                original_graph_id=original_graph_id,
+                augmented_graph_id=augmented_graph_id,
+            )
+        )
+        original_distribution = self._normalize_attention_distribution(
+            original_attention
+        ).detach()
+        augmented_distribution = self._normalize_attention_distribution(
+            augmented_attention
+        )
+        return original_distribution, augmented_distribution
+
+    def _compute_pair_attention_distribution_loss(
+            self,
+            attention_weights: torch.Tensor,
+            node_to_graph: torch.Tensor,
+            correspondence_id: torch.Tensor,
+            original_graph_id: int,
+            augmented_graph_id: int,
+            eps: float = 1e-8) -> torch.Tensor:
+        if eps <= 0:
+            raise ValueError(f"eps must be positive, got {eps}.")
+
+        original_distribution, augmented_distribution = (
+            self._prepare_attention_distributions(
+                attention_weights=attention_weights,
+                node_to_graph=node_to_graph,
+                correspondence_id=correspondence_id,
+                original_graph_id=original_graph_id,
+                augmented_graph_id=augmented_graph_id,
+            )
+        )
+        if original_distribution.shape != augmented_distribution.shape:
+            raise ValueError(
+                "Original and augmented attention distributions must have "
+                f"the same shape, got {tuple(original_distribution.shape)} "
+                f"and {tuple(augmented_distribution.shape)}."
+            )
+
+        midpoint = 0.5 * (
+            original_distribution + augmented_distribution
+        )
+        original_kl = torch.sum(
+            original_distribution * (
+                torch.log(original_distribution.clamp_min(eps))
+                - torch.log(midpoint.clamp_min(eps))
+            )
+        )
+        augmented_kl = torch.sum(
+            augmented_distribution * (
+                torch.log(augmented_distribution.clamp_min(eps))
+                - torch.log(midpoint.clamp_min(eps))
+            )
+        )
+        return 0.5 * (original_kl + augmented_kl)
+
+    def _compute_attention_distribution_loss(
+            self,
+            attention_weights: torch.Tensor,
+            batched_graph: Batch,
+            batch_size: int,
+            num_views: int) -> torch.Tensor:
+        if not hasattr(batched_graph, "correspondence_id"):
+            raise ValueError(
+                "Attention-distribution consistency requires correspondence_id "
+                "on every graph node."
+            )
+
+        graph_pairs = self._get_original_view_graph_pairs(
+            batch_size=batch_size,
+            num_views=num_views,
+            num_graphs=batched_graph.num_graphs,
+        )
+        pair_losses = [
+            self._compute_pair_attention_distribution_loss(
+                attention_weights=attention_weights,
+                node_to_graph=batched_graph.batch,
+                correspondence_id=batched_graph.correspondence_id,
+                original_graph_id=original_graph_id,
+                augmented_graph_id=augmented_graph_id,
+            )
+            for original_graph_id, augmented_graph_id in graph_pairs
+        ]
+        return torch.stack(pair_losses).mean()
+
     def _encode_edge_attributes(self, edge_attr: torch.Tensor) -> torch.Tensor:
         if edge_attr.dim() != 2 or edge_attr.size(1) != 2:
             raise ValueError(
@@ -245,8 +436,32 @@ class GINEConvEncoder(torch.nn.Module):
 
     def forward(self, batched_graph: Batch):
         out, _, _ = self._encode_and_readout(batched_graph)
-        
+
         return out  # graph-level embeddings
+
+    def forward_with_attention_distribution_loss(
+            self,
+            batched_graph: Batch,
+            batch_size: int,
+            num_views: int):
+        if not self.attention_only:
+            raise ValueError(
+                "Attention-distribution consistency currently requires "
+                "gnn.attention_only=true."
+            )
+
+        graph_embeddings, _, attention_weights = self._encode_and_readout(
+            batched_graph
+        )
+        attention_distribution_loss = (
+            self._compute_attention_distribution_loss(
+                attention_weights=attention_weights,
+                batched_graph=batched_graph,
+                batch_size=batch_size,
+                num_views=num_views,
+            )
+        )
+        return graph_embeddings, attention_distribution_loss
 
 class GraphSwAVModel(torch.nn.Module):
 

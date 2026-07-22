@@ -67,6 +67,21 @@ class GraphSwAVVD(nn.Module):
         logits, _ = self.__classify(graph_encodings)
         return logits
 
+    def __forward_from_graph_encodings(self, graph_encodings):
+        swav_embeddings = self.__swav_projection_head(graph_encodings)
+        if self.swav_l2norm:
+            swav_embeddings = F.normalize(swav_embeddings, dim=-1, p=2)
+
+        logits, activations = self.__classify(graph_encodings)
+        prototype_scores = self.swav_prototypes(swav_embeddings)
+        return (
+            logits,
+            activations,
+            graph_encodings,
+            swav_embeddings,
+            prototype_scores,
+        )
+
     def forward_full(self, batch: Batch):
         """
 
@@ -77,13 +92,33 @@ class GraphSwAVVD(nn.Module):
         """
         # [n_SliceGraph, hidden size]
         graph_encodings = self.__graph_encoder(batch)
-        swav_embeddings = self.__swav_projection_head(graph_encodings)
-        if self.swav_l2norm:
-            swav_embeddings = F.normalize(swav_embeddings, dim=-1, p=2)
+        return self.__forward_from_graph_encodings(graph_encodings)
 
-        logits, activations = self.__classify(graph_encodings)
-        # [n_SliceGraph; n_classes]
-        return logits, activations, graph_encodings, swav_embeddings, self.swav_prototypes(swav_embeddings)
+    def forward_training_views(
+            self,
+            batch: Batch,
+            batch_size: int,
+            num_views: int):
+        encoder_forward = getattr(
+            self.__graph_encoder,
+            "forward_with_attention_distribution_loss",
+            None,
+        )
+        if encoder_forward is None:
+            raise ValueError(
+                "Attention-distribution consistency is only implemented for "
+                "the GINE graph encoder."
+            )
+
+        graph_encodings, attention_distribution_loss = encoder_forward(
+            batch,
+            batch_size=batch_size,
+            num_views=num_views,
+        )
+        return (
+            *self.__forward_from_graph_encodings(graph_encodings),
+            attention_distribution_loss,
+        )
 
     def forward(self, batch: Batch):
         return self.forward_full(batch)

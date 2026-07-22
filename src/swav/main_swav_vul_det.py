@@ -56,6 +56,7 @@ class TrainingContext:
     reg_losses: List[float] = field(default_factory=list)
     swav_losses: List[float] = field(default_factory=list)
     contrast_losses: List[float] = field(default_factory=list)
+    attention_distribution_losses: List[float] = field(default_factory=list)
 
 gnn_name_map = {
     "gcn": "GCN",
@@ -89,10 +90,14 @@ def forward_model(
         ctx: TrainingContext,
         model,
         graphs,
-        forward_fn=None):
+        forward_fn=None,
+        **forward_kwargs):
     if forward_fn is None:
         forward_fn = model
-    return forward_fn(graphs.to(ctx.device, non_blocking=True))
+    return forward_fn(
+        graphs.to(ctx.device, non_blocking=True),
+        **forward_kwargs,
+    )
 
 def get_train_batch_size_for_epoch(ctx: TrainingContext, epoch: int) -> int:
     batch_sizes = ctx.config.hyper_parameters.batch_sizes
@@ -244,17 +249,35 @@ def build_all_views_batch(batched_graph):
 def compute_training_loss(ctx: TrainingContext, model, batched_graph):
     num_views = len(batched_graph.augmented_views)
     validate_training_views(ctx, num_views)
+    batch_size = batched_graph.sz
 
     labels = batched_graph.labels.to(ctx.device, non_blocking=True)
     combined_graphs = getattr(batched_graph, "all_views", None)
     if combined_graphs is None:
         combined_graphs = build_all_views_batch(batched_graph)
-    logits_all, activations_all, graph_encodings_all, _, output_all = forward_model(
-        ctx,
-        model,
-        combined_graphs,
-    )
-    batch_size = batched_graph.sz
+
+    if is_lambda_enabled(ctx, "attention_distribution"):
+        (
+            logits_all,
+            activations_all,
+            graph_encodings_all,
+            _,
+            output_all,
+            attention_distribution_loss,
+        ) = forward_model(
+            ctx,
+            model,
+            combined_graphs,
+            forward_fn=model.forward_training_views,
+            batch_size=batch_size,
+            num_views=num_views,
+        )
+    else:
+        logits_all, activations_all, graph_encodings_all, _, output_all = (
+            forward_model(ctx, model, combined_graphs)
+        )
+        attention_distribution_loss = logits_all.new_zeros(())
+
     logits = logits_all[:batch_size]
     activations = activations_all[:batch_size]
     anchor_graph_encodings = graph_encodings_all[:batch_size]
@@ -311,6 +334,8 @@ def compute_training_loss(ctx: TrainingContext, model, batched_graph):
         + ctx.config.hyper_parameters.lambdas.regularization * regularization_loss
         + ctx.config.hyper_parameters.lambdas.swav * swav_loss
         + ctx.config.hyper_parameters.lambdas.contrastive * contrastive_loss
+        + ctx.config.hyper_parameters.lambdas.attention_distribution
+        * attention_distribution_loss
     )
 
     metrics = {
@@ -319,6 +344,7 @@ def compute_training_loss(ctx: TrainingContext, model, batched_graph):
         "reg": regularization_loss.item(),
         "swav": swav_loss.item(),
         "contrast": contrastive_loss.item(),
+        "attention_distribution": attention_distribution_loss.item(),
     }
     return loss, metrics
 
@@ -350,6 +376,7 @@ def train(ctx: TrainingContext, train_loader, model, optimizer, scaler, lr_sched
     epoch_reg_losses = []
     epoch_swav_losses = []
     epoch_contrast_losses = []
+    epoch_attention_distribution_losses = []
 
     for batched_graph in progress_bar:
         with torch.no_grad():
@@ -373,22 +400,37 @@ def train(ctx: TrainingContext, train_loader, model, optimizer, scaler, lr_sched
         epoch_reg_losses.append(batch_losses["reg"])
         epoch_swav_losses.append(batch_losses["swav"])
         epoch_contrast_losses.append(batch_losses["contrast"])
+        epoch_attention_distribution_losses.append(
+            batch_losses["attention_distribution"]
+        )
 
         progress_bar.set_postfix({
             "ce": batch_losses["ce"],
             'proj': batch_losses["proj"],
             'reg': batch_losses["reg"],
             'swav': batch_losses["swav"],
-            'contrast': batch_losses["contrast"]
+            'contrast': batch_losses["contrast"],
+            'attn_dist': batch_losses["attention_distribution"],
         })
         del batched_graph, batch_losses
 
-    logging.info(f"Epoch {epoch + 1} - Cross-Entropy Loss: {np.mean(epoch_ce_losses):.4f}, Projection Loss: {np.mean(epoch_proj_losses):.4f}, Regularization Loss: {np.mean(epoch_reg_losses):.4f}, SwAV Loss: {np.mean(epoch_swav_losses):.4f}, Contrastive Loss: {np.mean(epoch_contrast_losses):.4f}")
+    logging.info(
+        f"Epoch {epoch + 1} - Cross-Entropy Loss: "
+        f"{np.mean(epoch_ce_losses):.4f}, Projection Loss: "
+        f"{np.mean(epoch_proj_losses):.4f}, Regularization Loss: "
+        f"{np.mean(epoch_reg_losses):.4f}, SwAV Loss: "
+        f"{np.mean(epoch_swav_losses):.4f}, Contrastive Loss: "
+        f"{np.mean(epoch_contrast_losses):.4f}, Attention Distribution "
+        f"Loss: {np.mean(epoch_attention_distribution_losses):.4f}"
+    )
     ctx.ce_losses.append(float(np.mean(epoch_ce_losses)))
     ctx.proj_losses.append(float(np.mean(epoch_proj_losses)))
     ctx.reg_losses.append(float(np.mean(epoch_reg_losses)))
     ctx.swav_losses.append(float(np.mean(epoch_swav_losses)))
     ctx.contrast_losses.append(float(np.mean(epoch_contrast_losses)))
+    ctx.attention_distribution_losses.append(
+        float(np.mean(epoch_attention_distribution_losses))
+    )
 
     del train_loader
     return training_step
@@ -587,6 +629,12 @@ def build_checkpoint_paths(
     do_swav = "NoSwAV" if config.hyper_parameters.lambdas.swav == 0.0 else "DoSwAV"
     gnn_attention_only = "GNNAttentionOnly" if config.gnn.attention_only else "GNNWithPooling"
     use_edge_attr = "WithEdgeAttr" if config.gnn.use_edge_attr else "NoEdgeAttr"
+    attention_distribution_text = (
+        "AttentionDistribution-"
+        f"{float(ctx.config.hyper_parameters.lambdas.attention_distribution):g}"
+        if is_lambda_enabled(ctx, "attention_distribution")
+        else "NoAttentionDistribution"
+    )
 
     if use_balanced_batch_sampler:
         sampler_text = "WithBalancedBatchSampler"
@@ -606,6 +654,7 @@ def build_checkpoint_paths(
         / contrastive_text
         / gnn_attention_only
         / use_edge_attr
+        / attention_distribution_text
         / sampler_text
     )
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -724,6 +773,10 @@ def plot_training_losses(ctx: TrainingContext, checkpoint_dir: Path):
     plt.plot(ctx.reg_losses, label='Regularization Loss')
     plt.plot(ctx.swav_losses, label='SwAV Loss')
     plt.plot(ctx.contrast_losses, label='Contrastive Loss')
+    plt.plot(
+        ctx.attention_distribution_losses,
+        label='Attention Distribution Loss',
+    )
     plt.xlabel('Iteration')
     plt.ylabel('Loss')
     plt.legend()
