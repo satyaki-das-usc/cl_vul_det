@@ -177,6 +177,30 @@ class GINEConvEncoder(torch.nn.Module):
 
         self.global_att = AttentionReadout(self.hidden)
 
+    @staticmethod
+    def _get_original_view_graph_pairs(
+            batch_size: int,
+            num_views: int,
+            num_graphs: int):
+        if batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {batch_size}.")
+        if num_views < 1:
+            raise ValueError(f"num_views must be >= 1, got {num_views}.")
+
+        expected_num_graphs = batch_size * (1 + num_views)
+        if num_graphs != expected_num_graphs:
+            raise ValueError(
+                "Combined graph batch has an unexpected number of graphs: "
+                f"expected {expected_num_graphs} for batch_size={batch_size} "
+                f"and num_views={num_views}, got {num_graphs}."
+            )
+
+        return [
+            (sample_id, (view_id + 1) * batch_size + sample_id)
+            for view_id in range(num_views)
+            for sample_id in range(batch_size)
+        ]
+
     def _encode_edge_attributes(self, edge_attr: torch.Tensor) -> torch.Tensor:
         if edge_attr.dim() != 2 or edge_attr.size(1) != 2:
             raise ValueError(
