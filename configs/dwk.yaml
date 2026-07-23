@@ -47,7 +47,7 @@ log_every_epoch: 10
 progress_bar_refresh_rate: 1
 exclude_NNs: false
 dataset:
-  name: FFMPeg_Qemu
+  name: BigVul
   version: v1
   token:
     max_parts: 16
