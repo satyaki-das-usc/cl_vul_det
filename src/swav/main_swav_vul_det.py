@@ -13,11 +13,13 @@ import matplotlib.pyplot as plt
 import logging
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from omegaconf import DictConfig, OmegaConf
 from typing import List, Optional, cast
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from torch.utils.tensorboard import SummaryWriter
 
 from torch_geometric.data import Batch
 from torch_geometric.loader import ImbalancedSampler
@@ -51,6 +53,7 @@ class TrainingContext:
     projection_criterion: Optional[OrthogonalProjectionLoss]
     contrastive_criterion: Optional[object]
     use_amp: bool
+    writer: Optional[SummaryWriter] = None
     ce_losses: List[float] = field(default_factory=list)
     proj_losses: List[float] = field(default_factory=list)
     reg_losses: List[float] = field(default_factory=list)
@@ -76,6 +79,105 @@ def is_contrastive_enabled(ctx: TrainingContext) -> bool:
         bool(ctx.config.swav.contrastive.get("enabled", True))
         and is_lambda_enabled(ctx, "contrastive")
     )
+
+loss_metric_to_lambda = {
+    "ce": "classification",
+    "proj": "projection",
+    "reg": "regularization",
+    "swav": "swav",
+    "contrast": "contrastive",
+    "attention_distribution": "attention_distribution",
+}
+
+def log_training_step_metrics(
+        ctx: TrainingContext,
+        optimizer,
+        metrics,
+        training_step: int):
+    if ctx.writer is None:
+        return
+
+    log_every_n_steps = max(
+        1,
+        int(ctx.config.hyper_parameters.get("log_every_n_steps", 50)),
+    )
+    if training_step % log_every_n_steps != 0:
+        return
+
+    for metric_name, lambda_name in loss_metric_to_lambda.items():
+        raw_value = metrics[metric_name]
+        weight = float(
+            ctx.config.hyper_parameters.lambdas.get(lambda_name, 0.0)
+        )
+        ctx.writer.add_scalar(
+            f"train_step/loss/raw/{metric_name}",
+            raw_value,
+            training_step,
+        )
+        ctx.writer.add_scalar(
+            f"train_step/loss/weighted/{metric_name}",
+            weight * raw_value,
+            training_step,
+        )
+
+    ctx.writer.add_scalar(
+        "train_step/loss/total",
+        metrics["total"],
+        training_step,
+    )
+    ctx.writer.add_scalar(
+        "train_step/optimization/learning_rate",
+        optimizer.param_groups[0]["lr"],
+        training_step,
+    )
+
+def log_training_epoch_metrics(
+        ctx: TrainingContext,
+        epoch: int,
+        epoch_metrics):
+    if ctx.writer is None:
+        return
+
+    tensorboard_epoch = epoch + 1
+    total_loss = 0.0
+    for metric_name, lambda_name in loss_metric_to_lambda.items():
+        raw_value = epoch_metrics[metric_name]
+        weight = float(
+            ctx.config.hyper_parameters.lambdas.get(lambda_name, 0.0)
+        )
+        total_loss += weight * raw_value
+        ctx.writer.add_scalar(
+            f"train_epoch/loss/raw/{metric_name}",
+            raw_value,
+            tensorboard_epoch,
+        )
+        ctx.writer.add_scalar(
+            f"train_epoch/loss/weighted/{metric_name}",
+            weight * raw_value,
+            tensorboard_epoch,
+        )
+    ctx.writer.add_scalar(
+        "train_epoch/loss/total",
+        total_loss,
+        tensorboard_epoch,
+    )
+    ctx.writer.flush()
+
+def log_validation_metrics(
+        ctx: TrainingContext,
+        epoch: int,
+        eval_stats):
+    if ctx.writer is None:
+        return
+
+    tensorboard_epoch = epoch + 1
+    for metric_name, value in eval_stats.items():
+        ctx.writer.add_scalar(
+            f"validation/{metric_name}",
+            value,
+            tensorboard_epoch,
+        )
+    ctx.writer.flush()
 
 def validate_training_views(ctx: TrainingContext, num_views: int):
     if num_views < 2:
@@ -339,6 +441,7 @@ def compute_training_loss(ctx: TrainingContext, model, batched_graph):
     )
 
     metrics = {
+        "total": loss.item(),
         "ce": ce_loss.item(),
         "proj": projection_loss.item(),
         "reg": regularization_loss.item(),
@@ -392,6 +495,12 @@ def train(ctx: TrainingContext, train_loader, model, optimizer, scaler, lr_sched
             batched_graph,
             training_step,
         )
+        log_training_step_metrics(
+            ctx,
+            optimizer,
+            batch_losses,
+            training_step,
+        )
         lr_scheduler.step()
         training_step += 1
 
@@ -430,6 +539,20 @@ def train(ctx: TrainingContext, train_loader, model, optimizer, scaler, lr_sched
     ctx.contrast_losses.append(float(np.mean(epoch_contrast_losses)))
     ctx.attention_distribution_losses.append(
         float(np.mean(epoch_attention_distribution_losses))
+    )
+    log_training_epoch_metrics(
+        ctx,
+        epoch,
+        {
+            "ce": ctx.ce_losses[-1],
+            "proj": ctx.proj_losses[-1],
+            "reg": ctx.reg_losses[-1],
+            "swav": ctx.swav_losses[-1],
+            "contrast": ctx.contrast_losses[-1],
+            "attention_distribution": (
+                ctx.attention_distribution_losses[-1]
+            ),
+        },
     )
 
     del train_loader
@@ -757,6 +880,7 @@ def run_training_epochs(
             epoch,
             training_step,
         )
+        log_validation_metrics(ctx, epoch, eval_stats)
         best_val_f1, best_val_loss = update_best_checkpoints(
             model,
             eval_stats,
@@ -784,6 +908,33 @@ def plot_training_losses(ctx: TrainingContext, checkpoint_dir: Path):
     plt.title('Training Loss Convergence')
     plt.savefig(checkpoint_dir / 'training_losses.png', bbox_inches='tight')
     plt.close()
+
+def initialize_tensorboard(
+        ctx: TrainingContext,
+        checkpoint_dir: Path):
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    tensorboard_log_dir = (
+        checkpoint_dir
+        / "tensorboard"
+        / f"{timestamp}-seed-{ctx.config.seed}"
+    )
+    ctx.writer = SummaryWriter(
+        log_dir=str(tensorboard_log_dir),
+        flush_secs=10,
+    )
+    ctx.writer.add_text(
+        "run/configuration",
+        f"```yaml\n{OmegaConf.to_yaml(ctx.config)}\n```",
+        0,
+    )
+    ctx.writer.flush()
+    logging.info(f"TensorBoard log directory: {tensorboard_log_dir}")
+
+def close_tensorboard(ctx: TrainingContext):
+    if ctx.writer is None:
+        return
+    ctx.writer.close()
+    ctx.writer = None
 
 
 def run_test_and_save(
@@ -901,17 +1052,21 @@ def main(config: DictConfig, args):
     logging.info("Data module loading completed.")
 
     if not args.skip_training:
-        run_training_epochs(
-            ctx,
-            data_module,
-            model,
-            optimizer,
-            scaler,
-            lr_scheduler,
-            best_f1_checkpoint_path,
-            best_loss_checkpoint_path,
-        )
-        plot_training_losses(ctx, checkpoint_dir)
+        initialize_tensorboard(ctx, checkpoint_dir)
+        try:
+            run_training_epochs(
+                ctx,
+                data_module,
+                model,
+                optimizer,
+                scaler,
+                lr_scheduler,
+                best_f1_checkpoint_path,
+                best_loss_checkpoint_path,
+            )
+            plot_training_losses(ctx, checkpoint_dir)
+        finally:
+            close_tensorboard(ctx)
 
     run_final_testing(
         ctx,
