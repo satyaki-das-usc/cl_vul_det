@@ -1,4 +1,5 @@
 import json
+import secrets
 
 import torch
 # torch.multiprocessing.set_sharing_strategy('file_system')
@@ -1009,8 +1010,10 @@ def run_final_testing(
 
 
 def main(config: DictConfig, args):
+    config.seed = secrets.randbelow(2 ** 32)
     seed_everything(config.seed, workers=True)
     init_log(Path(__file__).stem)
+    logging.info(f"Random seed for this run: {config.seed}")
     log_cli_compatibility_warnings(args)
 
     dataset_root = get_dataset_root(config, args)
