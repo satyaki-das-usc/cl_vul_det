@@ -203,26 +203,26 @@ class GINEConvEncoder(torch.nn.Module):
 
     @staticmethod
     def _get_aligned_shared_attention(
-            attention_weights: torch.Tensor,
+            attention_logits: torch.Tensor,
             node_to_graph: torch.Tensor,
             correspondence_id: torch.Tensor,
             original_graph_id: int,
             augmented_graph_id: int):
-        if attention_weights.dim() != 1:
+        if attention_logits.dim() != 1:
             raise ValueError(
-                "attention_weights must be one-dimensional, "
-                f"got shape {tuple(attention_weights.shape)}."
+                "attention_logits must be one-dimensional, "
+                f"got shape {tuple(attention_logits.shape)}."
             )
 
-        num_nodes = attention_weights.numel()
+        num_nodes = attention_logits.numel()
         if node_to_graph.numel() != num_nodes:
             raise ValueError(
-                "node_to_graph and attention_weights must describe the same "
+                "node_to_graph and attention_logits must describe the same "
                 f"number of nodes, got {node_to_graph.numel()} and {num_nodes}."
             )
         if correspondence_id.numel() != num_nodes:
             raise ValueError(
-                "correspondence_id and attention_weights must describe the same "
+                "correspondence_id and attention_logits must describe the same "
                 f"number of nodes, got {correspondence_id.numel()} and {num_nodes}."
             )
 
@@ -234,7 +234,7 @@ class GINEConvEncoder(torch.nn.Module):
             raise ValueError(f"Augmented graph {augmented_graph_id} has no nodes.")
 
         original_ids = correspondence_id[original_mask]
-        original_weights = attention_weights[original_mask]
+        original_logits = attention_logits[original_mask]
         if (original_ids < 0).any():
             raise ValueError(
                 f"Original graph {original_graph_id} contains a negative "
@@ -243,7 +243,7 @@ class GINEConvEncoder(torch.nn.Module):
 
         shared_augmented_mask = augmented_mask & (correspondence_id >= 0)
         augmented_ids = correspondence_id[shared_augmented_mask]
-        augmented_weights = attention_weights[shared_augmented_mask]
+        augmented_logits = attention_logits[shared_augmented_mask]
         if augmented_ids.numel() == 0:
             raise ValueError(
                 f"Augmented graph {augmented_graph_id} has no shared original nodes."
@@ -264,8 +264,8 @@ class GINEConvEncoder(torch.nn.Module):
         augmented_order = torch.argsort(augmented_ids)
         original_ids = original_ids[original_order]
         augmented_ids = augmented_ids[augmented_order]
-        original_weights = original_weights[original_order]
-        augmented_weights = augmented_weights[augmented_order]
+        original_logits = original_logits[original_order]
+        augmented_logits = augmented_logits[augmented_order]
 
         if not torch.equal(original_ids, augmented_ids):
             raise ValueError(
@@ -273,38 +273,37 @@ class GINEConvEncoder(torch.nn.Module):
                 f"{augmented_graph_id} do not contain the same correspondence IDs."
             )
 
-        return original_weights, augmented_weights
+        return original_logits, augmented_logits
 
     @staticmethod
     def _normalize_attention_distribution(
-            attention_weights: torch.Tensor) -> torch.Tensor:
-        if attention_weights.dim() != 1:
+            attention_logits: torch.Tensor) -> torch.Tensor:
+        if attention_logits.dim() != 1:
             raise ValueError(
-                "attention_weights must be one-dimensional, "
-                f"got shape {tuple(attention_weights.shape)}."
+                "attention_logits must be one-dimensional, "
+                f"got shape {tuple(attention_logits.shape)}."
             )
-        if attention_weights.numel() == 0:
+        if attention_logits.numel() == 0:
             raise ValueError("Cannot normalize an empty attention distribution.")
 
-        attention_weights = attention_weights.float()
-        total_attention = attention_weights.sum()
-        if not torch.isfinite(total_attention) or total_attention <= 0:
+        attention_logits = attention_logits.float()
+        if not torch.isfinite(attention_logits).all():
             raise ValueError(
-                "Attention distribution must have finite, positive total mass."
+                "Attention logits must contain only finite values."
             )
 
-        return attention_weights / total_attention
+        return F.softmax(attention_logits, dim=0)
 
     def _prepare_attention_distributions(
             self,
-            attention_weights: torch.Tensor,
+            attention_logits: torch.Tensor,
             node_to_graph: torch.Tensor,
             correspondence_id: torch.Tensor,
             original_graph_id: int,
             augmented_graph_id: int):
-        original_attention, augmented_attention = (
+        original_logits, augmented_logits = (
             self._get_aligned_shared_attention(
-                attention_weights=attention_weights,
+                attention_logits=attention_logits,
                 node_to_graph=node_to_graph,
                 correspondence_id=correspondence_id,
                 original_graph_id=original_graph_id,
@@ -312,16 +311,16 @@ class GINEConvEncoder(torch.nn.Module):
             )
         )
         original_distribution = self._normalize_attention_distribution(
-            original_attention
+            original_logits
         ).detach()
         augmented_distribution = self._normalize_attention_distribution(
-            augmented_attention
+            augmented_logits
         )
         return original_distribution, augmented_distribution
 
     def _compute_pair_attention_distribution_loss(
             self,
-            attention_weights: torch.Tensor,
+            attention_logits: torch.Tensor,
             node_to_graph: torch.Tensor,
             correspondence_id: torch.Tensor,
             original_graph_id: int,
@@ -332,7 +331,7 @@ class GINEConvEncoder(torch.nn.Module):
 
         original_distribution, augmented_distribution = (
             self._prepare_attention_distributions(
-                attention_weights=attention_weights,
+                attention_logits=attention_logits,
                 node_to_graph=node_to_graph,
                 correspondence_id=correspondence_id,
                 original_graph_id=original_graph_id,
@@ -365,7 +364,7 @@ class GINEConvEncoder(torch.nn.Module):
 
     def _compute_attention_distribution_loss(
             self,
-            attention_weights: torch.Tensor,
+            attention_logits: torch.Tensor,
             batched_graph: Batch,
             batch_size: int,
             num_views: int) -> torch.Tensor:
@@ -382,7 +381,7 @@ class GINEConvEncoder(torch.nn.Module):
         )
         pair_losses = [
             self._compute_pair_attention_distribution_loss(
-                attention_weights=attention_weights,
+                attention_logits=attention_logits,
                 node_to_graph=batched_graph.batch,
                 correspondence_id=batched_graph.correspondence_id,
                 original_graph_id=original_graph_id,
@@ -450,12 +449,12 @@ class GINEConvEncoder(torch.nn.Module):
                 "gnn.attention_only=true."
             )
 
-        graph_embeddings, _, attention_weights = self._encode_and_readout(
+        graph_embeddings, attention_logits, _ = self._encode_and_readout(
             batched_graph
         )
         attention_distribution_loss = (
             self._compute_attention_distribution_loss(
-                attention_weights=attention_weights,
+                attention_logits=attention_logits,
                 batched_graph=batched_graph,
                 batch_size=batch_size,
                 num_views=num_views,
