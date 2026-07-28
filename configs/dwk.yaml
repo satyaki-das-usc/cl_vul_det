@@ -131,11 +131,15 @@ hyper_parameters:
   use_balanced_batch_sampler: true
   lambdas:
     classification: 1.0
-    projection: 1.0
+    projection: 0.0
     regularization: 0.01
-    swav: 0.7
+    swav: 0.0
     contrastive: 0.7
     attention_distribution: 1.0
+  training_stages:
+    enabled: true
+    classification_only_epochs: 10
+    representation_epochs: 10
   temperature: 0.2
   vector_length: 128
   n_epochs: 100

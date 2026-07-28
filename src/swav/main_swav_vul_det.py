@@ -81,6 +81,85 @@ def is_contrastive_enabled(ctx: TrainingContext) -> bool:
         and is_lambda_enabled(ctx, "contrastive")
     )
 
+def is_staged_training_enabled(ctx: TrainingContext) -> bool:
+    stages = ctx.config.hyper_parameters.get("training_stages", {})
+    return bool(stages.get("enabled", False))
+
+def get_training_stage(ctx: TrainingContext, epoch: int) -> int:
+    if not is_staged_training_enabled(ctx):
+        return 3
+
+    stages = ctx.config.hyper_parameters.training_stages
+    classification_only_epochs = int(stages.classification_only_epochs)
+    representation_epochs = int(stages.representation_epochs)
+
+    if epoch < classification_only_epochs:
+        return 1
+    if epoch < classification_only_epochs + representation_epochs:
+        return 2
+    return 3
+
+def get_active_objectives(ctx: TrainingContext, stage: int):
+    objectives = ["classification"]
+    if not is_staged_training_enabled(ctx):
+        for lambda_name in (
+                "projection",
+                "regularization",
+                "swav",
+                "contrastive",
+                "attention_distribution"):
+            if is_lambda_enabled(ctx, lambda_name):
+                objectives.append(lambda_name)
+        return objectives
+
+    if stage >= 2:
+        if is_lambda_enabled(ctx, "regularization"):
+            objectives.append("regularization")
+        if is_contrastive_enabled(ctx):
+            objectives.append(ctx.config.swav.contrastive.criterion)
+    if stage >= 3 and is_lambda_enabled(ctx, "attention_distribution"):
+        objectives.append("attention_distribution")
+    return objectives
+
+def validate_training_stages(ctx: TrainingContext):
+    if not is_staged_training_enabled(ctx):
+        return
+
+    stages = ctx.config.hyper_parameters.training_stages
+    classification_only_epochs = int(stages.classification_only_epochs)
+    representation_epochs = int(stages.representation_epochs)
+    n_epochs = int(ctx.config.hyper_parameters.n_epochs)
+
+    if classification_only_epochs < 0:
+        raise ValueError(
+            "training_stages.classification_only_epochs must be nonnegative."
+        )
+    if representation_epochs < 0:
+        raise ValueError(
+            "training_stages.representation_epochs must be nonnegative."
+        )
+    if classification_only_epochs + representation_epochs >= n_epochs:
+        raise ValueError(
+            "The Stage 1 and Stage 2 durations must leave at least one "
+            "epoch for Stage 3."
+        )
+    if not is_lambda_enabled(ctx, "classification"):
+        raise ValueError("Staged training requires classification loss.")
+    if not is_lambda_enabled(ctx, "regularization"):
+        raise ValueError("Stage 2 requires regularization loss.")
+    if not is_contrastive_enabled(ctx):
+        raise ValueError("Stage 2 requires an enabled contrastive loss.")
+    if not is_lambda_enabled(ctx, "attention_distribution"):
+        raise ValueError(
+            "Stage 3 requires attention-distribution alignment loss."
+        )
+    if is_lambda_enabled(ctx, "projection"):
+        raise ValueError(
+            "Projection loss must be disabled for this staged schedule."
+        )
+    if is_lambda_enabled(ctx, "swav"):
+        raise ValueError("SwAV loss must be disabled for this staged schedule.")
+
 loss_metric_to_lambda = {
     "ce": "classification",
     "proj": "projection",
@@ -349,17 +428,47 @@ def build_all_views_batch(batched_graph):
     ]
     return Batch.from_data_list(graphs + augmented_views)
 
-def compute_training_loss(ctx: TrainingContext, model, batched_graph):
+def compute_training_loss(
+        ctx: TrainingContext,
+        model,
+        batched_graph,
+        epoch: int):
+    stage = get_training_stage(ctx, epoch)
     num_views = len(batched_graph.augmented_views)
-    validate_training_views(ctx, num_views)
     batch_size = batched_graph.sz
 
     labels = batched_graph.labels.to(ctx.device, non_blocking=True)
+    if stage == 1:
+        logits = forward_model(
+            ctx,
+            model,
+            batched_graph.graphs,
+            forward_fn=model.forward_logits,
+        )
+        ce_loss = F.cross_entropy(logits, labels)
+        zero_loss = logits.new_zeros(())
+        loss = (
+            ctx.config.hyper_parameters.lambdas.classification
+            * ce_loss
+        )
+        return loss, {
+            "total": loss.item(),
+            "ce": ce_loss.item(),
+            "proj": zero_loss.item(),
+            "reg": zero_loss.item(),
+            "swav": zero_loss.item(),
+            "contrast": zero_loss.item(),
+            "attention_distribution": zero_loss.item(),
+        }
+
+    validate_training_views(ctx, num_views)
     combined_graphs = getattr(batched_graph, "all_views", None)
     if combined_graphs is None:
         combined_graphs = build_all_views_batch(batched_graph)
 
-    if is_lambda_enabled(ctx, "attention_distribution"):
+    if (
+            stage >= 3
+            and is_lambda_enabled(ctx, "attention_distribution")):
         (
             logits_all,
             activations_all,
@@ -398,7 +507,7 @@ def compute_training_loss(ctx: TrainingContext, model, batched_graph):
         projection_loss = ctx.projection_criterion(activations, labels)
 
     regularization_loss = zero_loss
-    if is_lambda_enabled(ctx, "regularization"):
+    if stage >= 2 and is_lambda_enabled(ctx, "regularization"):
         regularization_loss = torch.norm(anchor_graph_encodings, dim=-1).mean() + torch.norm(activations, dim=-1).mean()
 
     swav_loss = logits.new_zeros(())
@@ -419,7 +528,7 @@ def compute_training_loss(ctx: TrainingContext, model, batched_graph):
         swav_loss = swav_loss / len(views_for_assign)
 
     contrastive_loss = logits.new_zeros(())
-    if is_contrastive_enabled(ctx):
+    if stage >= 2 and is_contrastive_enabled(ctx):
         if ctx.contrastive_criterion is None:
             raise RuntimeError("contrastive_criterion is not initialized.")
         if ctx.config.swav.contrastive.criterion == "info_nce":
@@ -452,11 +561,23 @@ def compute_training_loss(ctx: TrainingContext, model, batched_graph):
     }
     return loss, metrics
 
-def run_training_step(ctx: TrainingContext, model, optimizer, scaler, batched_graph, training_step: int):
+def run_training_step(
+        ctx: TrainingContext,
+        model,
+        optimizer,
+        scaler,
+        batched_graph,
+        epoch: int,
+        training_step: int):
     optimizer.zero_grad(set_to_none=True)
 
     with torch.amp.autocast(ctx.device.type, enabled=ctx.use_amp):
-        loss, metrics = compute_training_loss(ctx, model, batched_graph)
+        loss, metrics = compute_training_loss(
+            ctx,
+            model,
+            batched_graph,
+            epoch,
+        )
     scaler.scale(loss).backward()
     # cancel gradients for the prototypes
     if training_step < ctx.config.swav.freeze_prototypes_niters:
@@ -471,9 +592,16 @@ def run_training_step(ctx: TrainingContext, model, optimizer, scaler, batched_gr
     return metrics
 
 def train(ctx: TrainingContext, train_loader, model, optimizer, scaler, lr_scheduler, epoch, training_step: int):
-    logging.info(f"Epoch {epoch + 1}")
+    stage = get_training_stage(ctx, epoch)
+    active_objectives = get_active_objectives(ctx, stage)
+    logging.info(
+        f"Epoch {epoch + 1} - Stage {stage}: "
+        f"{' + '.join(active_objectives)}"
+    )
+    if ctx.writer is not None:
+        ctx.writer.add_scalar("training/stage", stage, epoch + 1)
     model.train()
-    progress_bar = tqdm(train_loader, desc="Training")
+    progress_bar = tqdm(train_loader, desc=f"Training - Stage {stage}")
 
     epoch_ce_losses = []
     epoch_proj_losses = []
@@ -494,6 +622,7 @@ def train(ctx: TrainingContext, train_loader, model, optimizer, scaler, lr_sched
             optimizer,
             scaler,
             batched_graph,
+            epoch,
             training_step,
         )
         log_training_step_metrics(
@@ -644,7 +773,11 @@ def load_config_from_args(args) -> DictConfig:
     if args.use_lr_warmup:
         config.hyper_parameters.use_warmup_lr = True
     if args.no_cl_warmup:
-        config.hyper_parameters.contrastive_warmup_epochs = 0
+        stages = config.hyper_parameters.get("training_stages")
+        if stages is not None:
+            stages.classification_only_epochs = 0
+        else:
+            config.hyper_parameters.contrastive_warmup_epochs = 0
     if args.train_batch_size is not None:
         if args.train_batch_size < 1:
             raise ValueError("--train_batch_size must be >= 1")
@@ -672,8 +805,8 @@ def log_cli_compatibility_warnings(args):
         )
     if args.no_cl_warmup:
         logging.warning(
-            "--no_cl_warmup sets hyper_parameters.contrastive_warmup_epochs to 0, but "
-            "contrastive warmup is not implemented in this SwAV training loop."
+            "--no_cl_warmup sets the staged classification-only duration "
+            "to 0 epochs."
         )
 
 def get_dataset_root(config: DictConfig, args) -> Path:
@@ -748,7 +881,14 @@ def build_checkpoint_paths(
     dataset_name = Path(config.dataset.name).name
     gnn_name = gnn_name_map[config.gnn.name]
     nn_text = "ExcludeNN" if config.exclude_NNs else "IncludeNN"
-    cl_warmup_text = "CLWarmup" if config.hyper_parameters.contrastive_warmup_epochs > 0 else "NoCLWarmup"
+    if is_staged_training_enabled(ctx):
+        stages = config.hyper_parameters.training_stages
+        training_schedule_text = (
+            f"Staged-CE{int(stages.classification_only_epochs)}"
+            f"-Representation{int(stages.representation_epochs)}"
+        )
+    else:
+        training_schedule_text = "JointTraining"
     contrastive_text = "NoContrastive" if not is_contrastive_enabled(ctx) else config.swav.contrastive.criterion
     do_swav = "NoSwAV" if config.hyper_parameters.lambdas.swav == 0.0 else "DoSwAV"
     gnn_attention_only = "GNNAttentionOnly" if config.gnn.attention_only else "GNNWithPooling"
@@ -773,7 +913,7 @@ def build_checkpoint_paths(
         / dataset_name
         / gnn_name
         / nn_text
-        / cl_warmup_text
+        / training_schedule_text
         / do_swav
         / contrastive_text
         / gnn_attention_only
@@ -882,14 +1022,16 @@ def run_training_epochs(
             training_step,
         )
         log_validation_metrics(ctx, epoch, eval_stats)
-        best_val_f1, best_val_loss = update_best_checkpoints(
-            model,
-            eval_stats,
-            best_val_f1,
-            best_val_loss,
-            best_f1_checkpoint_path,
-            best_loss_checkpoint_path,
-        )
+        stage = get_training_stage(ctx, epoch)
+        if not is_staged_training_enabled(ctx) or stage == 3:
+            best_val_f1, best_val_loss = update_best_checkpoints(
+                model,
+                eval_stats,
+                best_val_f1,
+                best_val_loss,
+                best_f1_checkpoint_path,
+                best_loss_checkpoint_path,
+            )
 
 
 def plot_training_losses(ctx: TrainingContext, checkpoint_dir: Path):
@@ -1018,6 +1160,7 @@ def main(config: DictConfig, args):
 
     dataset_root = get_dataset_root(config, args)
     ctx, scaler = build_runtime_context(config)
+    validate_training_stages(ctx)
     vocab, model = load_vocab_and_model(ctx, dataset_root)
 
     (
