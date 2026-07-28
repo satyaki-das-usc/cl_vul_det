@@ -145,8 +145,6 @@ def validate_training_stages(ctx: TrainingContext):
         )
     if not is_lambda_enabled(ctx, "classification"):
         raise ValueError("Staged training requires classification loss.")
-    if not is_lambda_enabled(ctx, "regularization"):
-        raise ValueError("Stage 2 requires regularization loss.")
     if not is_contrastive_enabled(ctx):
         raise ValueError("Stage 2 requires an enabled contrastive loss.")
     if not is_lambda_enabled(ctx, "attention_distribution"):
