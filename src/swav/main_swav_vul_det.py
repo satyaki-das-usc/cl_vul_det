@@ -26,8 +26,6 @@ from torch_geometric.data import Batch
 from torch_geometric.loader import ImbalancedSampler
 from pytorch_lightning import seed_everything
 import torch.nn.functional as F
-from timm.optim.lars import Lars
-
 from src.common_utils import get_arg_parser, filter_warnings, init_log
 from src.vocabulary import Vocabulary
 from src.torch_data.datamodules import SliceDataModule
@@ -245,6 +243,14 @@ def log_validation_metrics(
         ctx: TrainingContext,
         epoch: int,
         eval_stats):
+    formatted_metrics = ", ".join(
+        f"{metric_name}: {value:.4f}"
+        for metric_name, value in eval_stats.items()
+    )
+    logging.info(
+        f"Epoch {epoch + 1} - Validation - {formatted_metrics}"
+    )
+
     if ctx.writer is None:
         return
 
@@ -852,11 +858,9 @@ def add_swav_arguments(arg_parser):
 
 
 def build_optimizer(config: DictConfig, model):
-    # Using LARS optimizer as per the SwAV paper.
-    return Lars(
+    return torch.optim.AdamW(
         model.parameters(),
         lr=config.swav.base_lr,
-        momentum=0.9,
         weight_decay=config.swav.wd
     )
 

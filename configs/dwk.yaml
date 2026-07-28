@@ -58,12 +58,12 @@ min_vul_per_batch: 3
 min_nonvul_per_batch: 1
 swav:
   batch_size: 256
-  learning_rate: 0.001
+  learning_rate: 0.002
   warmup_epochs: 0
   start_warmup: 0
-  base_lr: 0.6
-  final_lr: 0.0006
-  wd: 1e-6
+  base_lr: 0.002
+  final_lr: 0.00001
+  wd: 0
   freeze_prototypes_niters: 5005
   num_prototypes: 128
   hidden_mlp: 2048
@@ -156,7 +156,7 @@ hyper_parameters:
     - 128
     - 128
   test_batch_size: 128
-  use_amp: true
+  use_amp: false
   reload_dataloader: true
   clip_norm: 5
   val_every_step: 1.0
@@ -164,7 +164,7 @@ hyper_parameters:
   progress_bar_refresh_rate: 1
   resume_from_checkpoint: CLVulDet
   shuffle_data: true
-  optimizer: Adam
+  optimizer: AdamW
   nesterov: true
   use_warmup_lr: false
   contrastive_warmup_epochs: 0
