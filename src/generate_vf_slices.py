@@ -27,7 +27,7 @@ USE_CPU = cpu_count()
 
 feat_name_code_map = dict()
 
-def get_forward_slice_graph(CPG: nx.DiGraph, line_no: int):
+def get_forward_slice_lines(CPG: nx.DiGraph, line_no: int) -> Set[int]:
     slice_lines = set()
 
     forward_queue = deque()
@@ -45,16 +45,10 @@ def get_forward_slice_graph(CPG: nx.DiGraph, line_no: int):
                 continue
             visited.add(succ)
             forward_queue.append(succ)
-    if len(slice_lines) == 0:
-        return None
-    
-    slice_graph = CPG.subgraph(list(slice_lines)).copy()
-    for u, v, edge_data in slice_graph.edges(data=True):
-        edge_data["direction"] = "forward"
 
-    return slice_graph, slice_lines
+    return slice_lines
 
-def get_backward_slice_graph(CPG: nx.DiGraph, line_no: int):
+def get_backward_slice_lines(CPG: nx.DiGraph, line_no: int) -> Set[int]:
     slice_lines = set()
 
     backward_queue = deque()
@@ -72,36 +66,55 @@ def get_backward_slice_graph(CPG: nx.DiGraph, line_no: int):
                 continue
             visited.add(pred)
             backward_queue.append(pred)
-    if len(slice_lines) == 0:
-        return None
-    
-    slice_graph = CPG.subgraph(list(slice_lines)).copy()
-    for u, v, edge_data in slice_graph.edges(data=True):
-        edge_data["direction"] = "backward"
 
-    return slice_graph, slice_lines
+    return slice_lines
 
-def get_slices_with_direction(CPG: nx.DiGraph, line_no: int, vul_lines: Set[int], direction: str) -> List[nx.DiGraph]:
-    if direction == "forward":
-        slice_graph, slice_lines = get_forward_slice_graph(CPG, line_no)
-    elif direction == "backward":
-        slice_graph, slice_lines = get_backward_slice_graph(CPG, line_no)
-    elif direction == "both":
-        forward_slice_graph, forward_slice_lines = get_forward_slice_graph(CPG, line_no)
-        backward_slice_graph, backward_slice_lines = get_backward_slice_graph(CPG, line_no)
-        slice_lines = forward_slice_lines | backward_slice_lines
-        slice_graph = CPG.subgraph(list(slice_lines)).copy()
-        for u, v, edge_data in slice_graph.edges(data=True):
-            edge_data["direction"] = "forward"
-    else:
-        raise ValueError(f"Invalid slice direction: {direction}")
+def build_slice_graph(
+    CPG: nx.DiGraph,
+    slice_lines: Set[int],
+    line_no: int,
+    vul_lines: Set[int],
+    direction: str,
+) -> nx.DiGraph:
+    slice_graph = CPG.subgraph(slice_lines).copy()
+    edge_direction = "forward" if direction == "both" else direction
+    for _, _, edge_data in slice_graph.edges(data=True):
+        edge_data["direction"] = edge_direction
 
-    label = len(slice_lines.intersection(vul_lines)) > 0
-    slice_graph.graph["label"] = label
+    slice_graph.graph["label"] = bool(slice_lines.intersection(vul_lines))
     slice_graph.graph["key_line"] = line_no
     slice_graph.graph["type"] = direction
 
-    return [slice_graph]
+    return slice_graph
+
+def get_slices_with_direction(
+    CPG: nx.DiGraph,
+    line_no: int,
+    vul_lines: Set[int],
+    direction: str,
+    forward_line_cache: Dict[int, Set[int]],
+    backward_line_cache: Dict[int, Set[int]],
+) -> List[nx.DiGraph]:
+    def get_forward_lines() -> Set[int]:
+        if line_no not in forward_line_cache:
+            forward_line_cache[line_no] = get_forward_slice_lines(CPG, line_no)
+        return forward_line_cache[line_no]
+
+    def get_backward_lines() -> Set[int]:
+        if line_no not in backward_line_cache:
+            backward_line_cache[line_no] = get_backward_slice_lines(CPG, line_no)
+        return backward_line_cache[line_no]
+
+    if direction == "forward":
+        slice_lines = get_forward_lines()
+    elif direction == "backward":
+        slice_lines = get_backward_lines()
+    elif direction == "both":
+        slice_lines = get_forward_lines() | get_backward_lines()
+    else:
+        raise ValueError(f"Invalid slice direction: {direction}")
+
+    return [build_slice_graph(CPG, slice_lines, line_no, vul_lines, direction)]
 
 def get_slices(CPG: nx.DiGraph, key_line_map: Dict[str, Set[int]], vul_lines: Set[int]) -> Dict[str, List[nx.DiGraph]]:
     if CPG is None:
@@ -133,6 +146,9 @@ def get_slices(CPG: nx.DiGraph, key_line_map: Dict[str, Set[int]], vul_lines: Se
         "arith": "both"
     }
 
+    forward_line_cache: Dict[int, Set[int]] = {}
+    backward_line_cache: Dict[int, Set[int]] = {}
+
     for key, lines in key_line_map.items():
         if key not in slices.keys():
             continue
@@ -140,7 +156,16 @@ def get_slices(CPG: nx.DiGraph, key_line_map: Dict[str, Set[int]], vul_lines: Se
             continue
         slice_direction = slice_directions[key]
         for line_no in lines:
-            slices[key].extend(get_slices_with_direction(CPG, line_no, vul_lines, slice_direction))
+            slices[key].extend(
+                get_slices_with_direction(
+                    CPG,
+                    line_no,
+                    vul_lines,
+                    slice_direction,
+                    forward_line_cache,
+                    backward_line_cache,
+                )
+            )
 
     return slices
 
