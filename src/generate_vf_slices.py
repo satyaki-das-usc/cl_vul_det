@@ -91,25 +91,16 @@ def get_slices_with_direction(
     line_no: int,
     vul_lines: Set[int],
     direction: str,
-    forward_line_cache: Dict[int, Set[int]],
-    backward_line_cache: Dict[int, Set[int]],
 ) -> List[nx.DiGraph]:
-    def get_forward_lines() -> Set[int]:
-        if line_no not in forward_line_cache:
-            forward_line_cache[line_no] = get_forward_slice_lines(CPG, line_no)
-        return forward_line_cache[line_no]
-
-    def get_backward_lines() -> Set[int]:
-        if line_no not in backward_line_cache:
-            backward_line_cache[line_no] = get_backward_slice_lines(CPG, line_no)
-        return backward_line_cache[line_no]
-
     if direction == "forward":
-        slice_lines = get_forward_lines()
+        slice_lines = get_forward_slice_lines(CPG, line_no)
     elif direction == "backward":
-        slice_lines = get_backward_lines()
+        slice_lines = get_backward_slice_lines(CPG, line_no)
     elif direction == "both":
-        slice_lines = get_forward_lines() | get_backward_lines()
+        slice_lines = (
+            get_forward_slice_lines(CPG, line_no)
+            | get_backward_slice_lines(CPG, line_no)
+        )
     else:
         raise ValueError(f"Invalid slice direction: {direction}")
 
@@ -145,9 +136,6 @@ def get_slices(CPG: nx.DiGraph, key_line_map: Dict[str, Set[int]], vul_lines: Se
         "arith": "both"
     }
 
-    forward_line_cache: Dict[int, Set[int]] = {}
-    backward_line_cache: Dict[int, Set[int]] = {}
-
     for key, lines in key_line_map.items():
         if key not in slices.keys():
             continue
@@ -161,8 +149,6 @@ def get_slices(CPG: nx.DiGraph, key_line_map: Dict[str, Set[int]], vul_lines: Se
                     line_no,
                     vul_lines,
                     slice_direction,
-                    forward_line_cache,
-                    backward_line_cache,
                 )
             )
 
