@@ -2,6 +2,7 @@ import functools
 import os
 import json
 import pickle
+from collections import deque
 
 import networkx as nx
 import logging
@@ -29,13 +30,13 @@ feat_name_code_map = dict()
 def get_forward_slice_graph(CPG: nx.DiGraph, line_no: int):
     slice_lines = set()
 
-    forward_queue = []
+    forward_queue = deque()
     visited = set()
     forward_queue.append(line_no)
     visited.add(line_no)
 
-    while len(forward_queue) > 0:
-        current_line = forward_queue.pop(0)
+    while forward_queue:
+        current_line = forward_queue.popleft()
         slice_lines.add(current_line)
         if current_line not in CPG._succ:
             continue
@@ -56,13 +57,13 @@ def get_forward_slice_graph(CPG: nx.DiGraph, line_no: int):
 def get_backward_slice_graph(CPG: nx.DiGraph, line_no: int):
     slice_lines = set()
 
-    backward_queue = []
+    backward_queue = deque()
     visited = set()
     backward_queue.append(line_no)
     visited.add(line_no)
 
-    while len(backward_queue) > 0:
-        current_line = backward_queue.pop(0)
+    while backward_queue:
+        current_line = backward_queue.popleft()
         slice_lines.add(current_line)
         if current_line not in CPG._pred:
             continue
