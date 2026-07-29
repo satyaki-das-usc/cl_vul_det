@@ -203,9 +203,6 @@ def remove_static_control_dependency(CPG: nx.DiGraph, joern_nodes: List[Dict]) -
 
     return filtered_CPG
 
-def find_all(records, key, value):
-    return [d for d in records if d.get(key) == value]
-
 def build_CPG(code_path: str,
               source_path: str) -> Tuple[nx.DiGraph, Dict[str, Set[int]]]:
     
@@ -221,17 +218,20 @@ def build_CPG(code_path: str,
     nodes = read_csv(nodes_path)
     edges = read_csv(edges_path)
 
-    cfg_of_function_edges = find_all(edges, "type", "IS_FUNCTION_OF_CFG")
-    function_node_ids = [edge["start"] for edge in cfg_of_function_edges]
-    cfg_node_ids = [edge["end"] for edge in cfg_of_function_edges]
+    cfg_nid_to_function_nid = {}
+    for edge in edges:
+        if edge["type"] == "IS_FUNCTION_OF_CFG":
+            function_nid = edge["start"]
+            cfg_nid = edge["end"]
+            cfg_nid_to_function_nid.setdefault(cfg_nid, function_nid)
 
-    for func_nid, cfg_nid in zip(function_node_ids, cfg_node_ids):
-        for edge in edges:
-            if edge["type"] != "CONTROLS":
-                continue
-            if edge["start"] != cfg_nid:
-                continue
-            edge["start"] = func_nid
+    for edge in edges:
+        if edge["type"] != "CONTROLS":
+            continue
+        control_source_nid = edge["start"]
+        function_nid = cfg_nid_to_function_nid.get(control_source_nid)
+        if function_nid is not None:
+            edge["start"] = function_nid
 
     checking_call_lines = set()
     alloc_call_lines = set()
@@ -289,22 +289,25 @@ def build_CPG(code_path: str,
     CPG = nx.DiGraph(file_paths=[source_path])
     control_edges, data_edges, post_dom_edges, def_use_edges = list(), list(), list(), list()
     node_id_to_ln = extract_nodes_with_location_info(nodes)
+    node_by_key = {}
+    for node in nodes:
+        node_by_key.setdefault(node["key"].strip(), node)
+
     for edge in edges:
         edge_type = edge['type'].strip()
         start_node_id = edge['start'].strip()
         end_node_id = edge['end'].strip()
         if edge_type in ["DEF", "USE"]:
-            if start_node_id not in node_id_to_ln.keys():
+            if start_node_id not in node_id_to_ln:
                 continue
             start_ln = node_id_to_ln[start_node_id]
             end_ln = (-1) * int(end_node_id)
             if edge_type == "USE":
                 end_ln *= 2
-            symbol_used = [node for node in nodes if node["key"].strip() == end_node_id][0]["code"].strip()
+            symbol_used = node_by_key[end_node_id]["code"].strip()
             def_use_edges.append((start_ln, end_ln, {"label": edge_type, "symbol": symbol_used}))
             continue
-        if start_node_id not in node_id_to_ln.keys(
-        ) or end_node_id not in node_id_to_ln.keys():
+        if start_node_id not in node_id_to_ln or end_node_id not in node_id_to_ln:
             continue
         start_ln = node_id_to_ln[start_node_id]
         end_ln = node_id_to_ln[end_node_id]
