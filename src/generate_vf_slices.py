@@ -1,4 +1,3 @@
-import functools
 import os
 import json
 import pickle
@@ -8,7 +7,7 @@ import networkx as nx
 import logging
 
 import argparse
-from multiprocessing import Manager, Pool, Queue, cpu_count
+from multiprocessing import Pool, cpu_count
 from os.path import join, exists, isdir, dirname, basename, splitext, relpath
 from omegaconf import DictConfig, OmegaConf
 from typing import List, Set, Tuple, Dict, cast
@@ -388,7 +387,7 @@ def write_slices(slices: Dict[str, List[nx.DiGraph]], cpp_path: str) -> Dict[str
     
     return done_list
 
-def process_file_parallel(cpp_path, queue: Queue):
+def process_file_parallel(cpp_path):
     try:
         file_cpg_root = join(csv_path, cpp_path)
         # if cpp_path in unperturbed_files:
@@ -472,23 +471,16 @@ def process_dataset(dataset_root: str, config: DictConfig, only_clear_slices: bo
         logging.info(f"Completed.")
     
     logging.info(f"Going over {len(cpp_paths)} files...")
-    with Manager() as m:
-        message_queue = m.Queue()  # type: ignore
-        pool = Pool(USE_CPU)
-        process_func = functools.partial(process_file_parallel, queue=message_queue)
+    with Pool(USE_CPU) as pool:
         feat_slice_list: List = [
             file_slice
             for file_slices in tqdm(
-                pool.imap_unordered(process_func, cpp_paths),
+                pool.imap_unordered(process_file_parallel, cpp_paths),
                 desc=f"Cpp files",
                 total=len(cpp_paths),
             )
             for file_slice in file_slices
         ]
-
-        message_queue.put("finished")
-        pool.close()
-        pool.join()
     
     return feat_slice_list
 
