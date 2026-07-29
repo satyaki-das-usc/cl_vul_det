@@ -388,6 +388,17 @@ def process_file_parallel(cpp_path):
         logging.error(cpp_path)
         raise e
 
+def collect_slice_paths(file_results, total_files: int) -> List:
+    return [
+        file_slice
+        for file_slices in tqdm(
+            file_results,
+            desc="Cpp files",
+            total=total_files,
+        )
+        for file_slice in file_slices
+    ]
+
 def process_dataset(dataset_root: str, config: DictConfig, only_clear_slices: bool):
     global csv_path, slices_root, ground_truth, unperturbed_files, USE_CPU
     if not exists(dataset_root):
@@ -457,16 +468,17 @@ def process_dataset(dataset_root: str, config: DictConfig, only_clear_slices: bo
         logging.info(f"Completed.")
     
     logging.info(f"Going over {len(cpp_paths)} files...")
-    with Pool(USE_CPU) as pool:
-        feat_slice_list: List = [
-            file_slice
-            for file_slices in tqdm(
+    if USE_CPU == 1:
+        feat_slice_list = collect_slice_paths(
+            map(process_file_parallel, cpp_paths),
+            len(cpp_paths),
+        )
+    else:
+        with Pool(USE_CPU) as pool:
+            feat_slice_list = collect_slice_paths(
                 pool.imap_unordered(process_file_parallel, cpp_paths),
-                desc=f"Cpp files",
-                total=len(cpp_paths),
+                len(cpp_paths),
             )
-            for file_slice in file_slices
-        ]
     
     return feat_slice_list
 
