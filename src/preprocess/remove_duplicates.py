@@ -1,5 +1,4 @@
 import functools
-import os
 import json
 import pickle
 
@@ -8,7 +7,7 @@ import logging
 from multiprocessing import Manager, Pool, Queue, cpu_count
 from os.path import join, splitext, basename
 from omegaconf import DictConfig, OmegaConf
-from typing import List, cast, Dict
+from typing import cast, Dict
 
 from tqdm import tqdm
 
@@ -23,6 +22,7 @@ def process_file_parallel(cpp_path, queue: Queue):
         unique_vul_slice_set = set()
         unique_vul_slice_list = []
         unique_nonvul_slice_by_code: Dict[bytes, str] = {}
+        duplicate_slice_list = []
 
         for slice_path in all_slices:
             label, code_digest = slice_metadata[slice_path]
@@ -31,24 +31,24 @@ def process_file_parallel(cpp_path, queue: Queue):
                     unique_vul_slice_set.add(code_digest)
                     unique_vul_slice_list.append(slice_path)
                 else:
-                    with open("duplicate_slices.txt", "a") as afi:
-                        afi.write(f"{slice_path}\n")
+                    duplicate_slice_list.append(slice_path)
             else:
                 if code_digest not in unique_nonvul_slice_by_code:
                     unique_nonvul_slice_by_code[code_digest] = slice_path
                 else:
-                    with open("duplicate_slices.txt", "a") as afi:
-                        afi.write(f"{slice_path}\n")
+                    duplicate_slice_list.append(slice_path)
 
         final_unique_nonvul_slice_list = []
         for code_digest, slice_path in unique_nonvul_slice_by_code.items():
             if code_digest not in unique_vul_slice_set:
                 final_unique_nonvul_slice_list.append(slice_path)
             else:
-                with open("duplicate_slices.txt", "a") as afi:
-                    afi.write(f"{slice_path}\n")
+                duplicate_slice_list.append(slice_path)
 
-        return unique_vul_slice_list + final_unique_nonvul_slice_list
+        return (
+            unique_vul_slice_list + final_unique_nonvul_slice_list,
+            duplicate_slice_list,
+        )
 
     except Exception as e:
         logging.error(cpp_path)
@@ -69,8 +69,6 @@ if __name__ == "__main__":
     if args.use_temp_data:
         dataset_root = config.temp_root
 
-    os.system(f"touch duplicate_slices.txt")
-
     file_slices_path = join(dataset_root, config.file_slices_filename)
     logging.info(f"Loading filewise generated slices from {file_slices_path}...")
     with open(file_slices_path, "r") as rfi:
@@ -85,33 +83,36 @@ if __name__ == "__main__":
 
     logging.info(f"Going over {len(file_slices)} files...")
     cpp_paths = list(file_slices.keys())
+    unique_slice_list = []
+    duplicate_slices = set()
     if USE_CPU > 1:
         with Manager() as m:
             message_queue = m.Queue()  # type: ignore
             pool = Pool(USE_CPU)
             process_func = functools.partial(process_file_parallel, queue=message_queue)
-            unique_slice_list: List = [
-                file_slice
-                for file_slices in tqdm(
-                    pool.imap_unordered(process_func, cpp_paths),
-                    desc=f"Cpp files",
-                    total=len(cpp_paths),
-                )
-                for file_slice in file_slices
-            ]
+            for file_unique_slices, file_duplicate_slices in tqdm(
+                pool.imap_unordered(process_func, cpp_paths),
+                desc=f"Cpp files",
+                total=len(cpp_paths),
+            ):
+                unique_slice_list.extend(file_unique_slices)
+                duplicate_slices.update(file_duplicate_slices)
 
             message_queue.put("finished")
             pool.close()
             pool.join()
     else:
-        unique_slice_list = []
         for cpp_path in tqdm(cpp_paths, desc="Cpp files", total=len(cpp_paths)):
-            file_unique_slices = process_file_parallel(cpp_path, queue=None)
+            file_unique_slices, file_duplicate_slices = process_file_parallel(
+                cpp_path,
+                queue=None,
+            )
             unique_slice_list.extend(file_unique_slices)
-    
-    with open("duplicate_slices.txt", "r") as f:
-        duplicate_slices = f.readlines()
-    duplicate_slices = set([slice.strip() for slice in duplicate_slices])
+            duplicate_slices.update(file_duplicate_slices)
+
+    with open("duplicate_slices.txt", "w") as wfi:
+        wfi.writelines(f"{slice_path}\n" for slice_path in duplicate_slices)
+
     unique_slice_list = list(set(unique_slice_list) - duplicate_slices)
     
     logging.info(f"Total unique slices: {len(unique_slice_list)}")
