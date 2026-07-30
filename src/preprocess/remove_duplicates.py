@@ -1,10 +1,9 @@
-import functools
 import json
 import pickle
 
 import logging
 
-from multiprocessing import Manager, Pool, Queue, cpu_count
+from multiprocessing import Pool, cpu_count
 from os.path import join, splitext, basename
 from omegaconf import DictConfig, OmegaConf
 from typing import cast, Dict
@@ -16,7 +15,7 @@ from src.common_utils import get_arg_parser, init_log
 file_slices = dict()
 slice_metadata = dict()
 
-def process_file_parallel(cpp_path, queue: Queue):
+def process_file_parallel(cpp_path):
     try:
         all_slices = file_slices[cpp_path]
         unique_vul_slice_set = set()
@@ -86,27 +85,17 @@ if __name__ == "__main__":
     unique_slice_list = []
     duplicate_slices = set()
     if USE_CPU > 1:
-        with Manager() as m:
-            message_queue = m.Queue()  # type: ignore
-            pool = Pool(USE_CPU)
-            process_func = functools.partial(process_file_parallel, queue=message_queue)
+        with Pool(USE_CPU) as pool:
             for file_unique_slices, file_duplicate_slices in tqdm(
-                pool.imap_unordered(process_func, cpp_paths),
+                pool.imap_unordered(process_file_parallel, cpp_paths),
                 desc=f"Cpp files",
                 total=len(cpp_paths),
             ):
                 unique_slice_list.extend(file_unique_slices)
                 duplicate_slices.update(file_duplicate_slices)
-
-            message_queue.put("finished")
-            pool.close()
-            pool.join()
     else:
         for cpp_path in tqdm(cpp_paths, desc="Cpp files", total=len(cpp_paths)):
-            file_unique_slices, file_duplicate_slices = process_file_parallel(
-                cpp_path,
-                queue=None,
-            )
+            file_unique_slices, file_duplicate_slices = process_file_parallel(cpp_path)
             unique_slice_list.extend(file_unique_slices)
             duplicate_slices.update(file_duplicate_slices)
 
