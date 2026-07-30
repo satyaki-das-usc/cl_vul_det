@@ -1,4 +1,3 @@
-import functools
 import os
 import json
 import pickle
@@ -6,7 +5,7 @@ import pickle
 import networkx as nx
 import logging
 
-from multiprocessing import Manager, Pool, Queue, cpu_count
+from multiprocessing import Pool, cpu_count
 from os.path import join, splitext, basename
 from omegaconf import DictConfig, OmegaConf
 from typing import List, cast
@@ -24,7 +23,7 @@ def code_sym_token_exists(slice: nx.DiGraph) -> bool:
             return True
     return False
 
-def process_slice_parallel(slice_path, queue: Queue):
+def process_slice_parallel(slice_path):
     try:
         with open(slice_path, "rb") as rbfi:
             slice_graph: nx.DiGraph = pickle.load(rbfi)
@@ -76,22 +75,16 @@ if __name__ == "__main__":
     logging.info(f"Completed. Loaded {len(all_slices)} slices.")
 
     logging.info(f"Going over {len(all_slices)} files...")
-    with Manager() as m:
-        message_queue = m.Queue()  # type: ignore
-        pool = Pool(USE_CPU)
-        process_func = functools.partial(process_slice_parallel, queue=message_queue)
+    with Pool(USE_CPU) as pool:
         non_empty_slice_paths: List = [
             slice_path
             for slice_path in tqdm(
-                pool.imap_unordered(process_func, all_slices),
+                pool.imap_unordered(process_slice_parallel, all_slices),
                 desc=f"Slices",
                 total=len(all_slices),
             )
             if slice_path != ""
         ]
-        message_queue.put("finished")
-        pool.close()
-        pool.join()
     
     logging.info(f"Tokenized {len(non_empty_slice_paths)} slices.")
     logging.info(f"Saving tokenized slices to {all_slices_filepath}...")
