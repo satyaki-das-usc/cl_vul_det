@@ -4,10 +4,64 @@ import re
 import networkx as nx
 import wordninja as wn
 
+from functools import lru_cache
 from typing import List
 from os.path import join
 from omegaconf import DictConfig
 from transformers import RobertaTokenizer
+
+@lru_cache(maxsize=None)
+def load_tokenizer_resources(sensi_api_path: str):
+    operators3 = frozenset({'<<=', '>>='})
+    operators2 = frozenset({
+        '->', '++', '--', '!~', '<<', '>>', '<=', '>=', '==', '!=', '&&', '||',
+        '+=', '-=', '*=', '/=', '%=', '&=', '^=', '|='
+    })
+    operators1 = frozenset({
+        '(', ')', '[', ']', '.', '+', '-', '*', '&', '/', '%', '<', '>', '^', '|',
+        '=', ',', '?', ':', ';', '{', '}', '!', '~'
+    })
+    keywords = frozenset({
+        '__asm', '__builtin', '__cdecl', '__declspec', '__except', '__export',
+        '__far16', '__far32', '__fastcall', '__finally', '__import', '__inline',
+        '__int16', '__int32', '__int64', '__int8', '__leave', '__optlink',
+        '__packed', '__pascal', '__stdcall', '__system', '__thread', '__try',
+        '__unaligned', '_asm', '_Builtin', '_Cdecl', '_declspec', '_except',
+        '_Export', '_Far16', '_Far32', '_Fastcall', '_finally', '_Import',
+        '_inline', '_int16', '_int32', '_int64', '_int8', '_leave', '_Optlink',
+        '_Packed', '_Pascal', '_stdcall', '_System', '_try', 'alignas', 'alignof',
+        'and', 'and_eq', 'asm', 'auto', 'bitand', 'bitor', 'bool', 'break', 'case',
+        'catch', 'char', 'char16_t', 'char32_t', 'class', 'compl', 'const',
+        'const_cast', 'constexpr', 'continue', 'decltype', 'default', 'delete',
+        'do', 'double', 'dynamic_cast', 'else', 'enum', 'explicit', 'export',
+        'extern', 'false', 'final', 'float', 'for', 'friend', 'goto', 'if',
+        'inline', 'int', 'long', 'mutable', 'namespace', 'new', 'noexcept', 'not',
+        'not_eq', 'nullptr', 'operator', 'or', 'or_eq', 'override', 'private',
+        'protected', 'public', 'register', 'reinterpret_cast', 'return', 'short',
+        'signed', 'sizeof', 'static', 'static_assert', 'static_cast', 'struct',
+        'switch', 'template', 'this', 'thread_local', 'throw', 'true', 'try',
+        'typedef', 'typeid', 'typename', 'union', 'unsigned', 'using', 'virtual',
+        'void', 'volatile', 'wchar_t', 'while', 'xor', 'xor_eq', 'NULL'
+    })
+    with open(sensi_api_path, "r") as rfi:
+        keywords = keywords.union(json.load(rfi))
+
+    main_set = frozenset({'main'})
+    main_args = frozenset({'argc', 'argv'})
+    edge_type_map = {
+        "REACHES": "COMESFROM",
+        "CONTROLS": "FOLLOWS"
+    }
+
+    return (
+        operators3,
+        operators2,
+        operators1,
+        keywords,
+        main_set,
+        main_args,
+        edge_type_map,
+    )
 
 def is_partial_for_loop(node_sym_code: str) -> bool:
     """
@@ -27,54 +81,24 @@ class SliceTokenizer:
     #     self.delimiter = delimiter
 
     def __init__(self, slice_graph: nx.DiGraph, src_lines: List[str], config: DictConfig):
-        self.slice_graph = slice_graph.copy()
+        self.slice_graph = slice_graph
         self.src_lines = src_lines
 
         self.tokenizer = None
         if not config.use_custom_tokenizer:
             self.tokenizer = RobertaTokenizer.from_pretrained(config.tokenizer_name)
 
-        self.operators3 = {'<<=', '>>='}
-        self.operators2 = {
-            '->', '++', '--', '!~', '<<', '>>', '<=', '>=', '==', '!=', '&&', '||',
-            '+=', '-=', '*=', '/=', '%=', '&=', '^=', '|='
-        }
-        self.operators1 = {
-            '(', ')', '[', ']', '.', '+', '-', '*', '&', '/', '%', '<', '>', '^', '|',
-            '=', ',', '?', ':', ';', '{', '}', '!', '~'
-        }
-        
-        keywords = frozenset({
-            '__asm', '__builtin', '__cdecl', '__declspec', '__except', '__export',
-            '__far16', '__far32', '__fastcall', '__finally', '__import', '__inline',
-            '__int16', '__int32', '__int64', '__int8', '__leave', '__optlink',
-            '__packed', '__pascal', '__stdcall', '__system', '__thread', '__try',
-            '__unaligned', '_asm', '_Builtin', '_Cdecl', '_declspec', '_except',
-            '_Export', '_Far16', '_Far32', '_Fastcall', '_finally', '_Import',
-            '_inline', '_int16', '_int32', '_int64', '_int8', '_leave', '_Optlink',
-            '_Packed', '_Pascal', '_stdcall', '_System', '_try', 'alignas', 'alignof',
-            'and', 'and_eq', 'asm', 'auto', 'bitand', 'bitor', 'bool', 'break', 'case',
-            'catch', 'char', 'char16_t', 'char32_t', 'class', 'compl', 'const',
-            'const_cast', 'constexpr', 'continue', 'decltype', 'default', 'delete',
-            'do', 'double', 'dynamic_cast', 'else', 'enum', 'explicit', 'export',
-            'extern', 'false', 'final', 'float', 'for', 'friend', 'goto', 'if',
-            'inline', 'int', 'long', 'mutable', 'namespace', 'new', 'noexcept', 'not',
-            'not_eq', 'nullptr', 'operator', 'or', 'or_eq', 'override', 'private',
-            'protected', 'public', 'register', 'reinterpret_cast', 'return', 'short',
-            'signed', 'sizeof', 'static', 'static_assert', 'static_cast', 'struct',
-            'switch', 'template', 'this', 'thread_local', 'throw', 'true', 'try',
-            'typedef', 'typeid', 'typename', 'union', 'unsigned', 'using', 'virtual',
-            'void', 'volatile', 'wchar_t', 'while', 'xor', 'xor_eq', 'NULL'
-        })
-        with open(join(config.data_folder, config.sensi_api_filename), "r") as rfi:
-            self.keywords = keywords.union(set(json.load(rfi)))
-
-        self.main_set = frozenset({'main'})
-        self.main_args = frozenset({'argc', 'argv'})
-        self.edge_type_map = {
-            "REACHES": "COMESFROM",
-            "CONTROLS": "FOLLOWS"
-        }
+        (
+            self.operators3,
+            self.operators2,
+            self.operators1,
+            self.keywords,
+            self.main_set,
+            self.main_args,
+            self.edge_type_map,
+        ) = load_tokenizer_resources(
+            join(config.data_folder, config.sensi_api_filename)
+        )
     
     def split_self_control_edge(self, start: int, end: int):
         assert self.slice_graph.has_edge(start, end), f"I love Elon Musk and Tesla and Donald Trump, but this is not a self control edge: {start} -> {end}"
