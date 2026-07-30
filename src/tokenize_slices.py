@@ -23,18 +23,22 @@ def load_source_lines(src_cpp_path):
     with open(src_cpp_path, "r") as rfi:
         return rfi.readlines()
 
-def code_sym_token_exists(slice: nx.DiGraph) -> bool:
-    for n in slice:
-        if "code_sym_token" in slice.nodes[n]:
-            return True
-    return False
+def slice_is_tokenized(slice_graph: nx.DiGraph) -> bool:
+    return (
+        "slice_sym_code" in slice_graph.graph
+        and "slice_sym_token" in slice_graph.graph
+        and all(
+            "code_sym_token" in node_data
+            for _, node_data in slice_graph.nodes(data=True)
+        )
+    )
 
 def process_slice_parallel(slice_path):
     try:
         with open(slice_path, "rb") as rbfi:
             slice_graph: nx.DiGraph = pickle.load(rbfi)
     
-        if code_sym_token_exists(slice_graph):
+        if slice_is_tokenized(slice_graph):
             return slice_path
         
         src_cpp_path = join(slice_path.partition(config.slice_folder)[0], config.source_root_folder, slice_graph.graph["file_paths"][0])
