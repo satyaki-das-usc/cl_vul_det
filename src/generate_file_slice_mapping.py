@@ -1,34 +1,63 @@
 from collections import defaultdict
-import functools
+from functools import lru_cache
 import json
-import pickle
-
-import networkx as nx
 import logging
 
-from multiprocessing import Manager, Pool, Queue, cpu_count
 from os.path import join, splitext, basename
+from pathlib import Path
 from omegaconf import DictConfig, OmegaConf
-from typing import List, cast
+from typing import cast
 
 from tqdm import tqdm
 
 from src.common_utils import get_arg_parser, init_log
 
-config = None
+SOURCE_EXTENSIONS = (".c", ".cpp", ".h")
 
-def process_slice_parallel(slice_path, queue: Queue):
+
+@lru_cache(maxsize=None)
+def resolve_source_path(source_base: str) -> str:
+    matches = [
+        f"{source_base}{extension}"
+        for extension in SOURCE_EXTENSIONS
+        if Path(f"{source_base}{extension}").is_file()
+    ]
+
+    if not matches:
+        raise FileNotFoundError(f"Could not find source file for {source_base}")
+    if len(matches) > 1:
+        raise RuntimeError(f"Ambiguous source files for {source_base}: {matches}")
+
+    return matches[0]
+
+
+def source_base_from_slice(
+    slice_path: str,
+    slice_folder: str,
+    source_root_folder: str,
+) -> str:
+    path = Path(slice_path)
+    parts = list(path.parts)
+
     try:
-        with open(slice_path, "rb") as rbfi:
-            slice_graph: nx.DiGraph = pickle.load(rbfi)
-       
-        src_cpp_path = join(slice_path.partition(config.slice_folder)[0], config.source_root_folder, slice_graph.graph["file_paths"][0])
-        
-        return src_cpp_path, slice_path
-    
-    except Exception as e:
-        logging.error(slice_path)
-        raise e
+        slice_index = parts.index(slice_folder)
+    except ValueError as error:
+        raise ValueError(
+            f"Path does not contain the '{slice_folder}' directory: {slice_path}"
+        ) from error
+
+    source_stem, separator, _ = path.name.partition("___")
+    if not separator:
+        raise ValueError(f"Unexpected slice filename: {path.name}")
+
+    return str(
+        Path(
+            *parts[:slice_index],
+            source_root_folder,
+            *parts[slice_index + 1:-1],
+            source_stem,
+        )
+    )
 
 if __name__ == "__main__":
     arg_parser = get_arg_parser()
@@ -36,10 +65,6 @@ if __name__ == "__main__":
     init_log(splitext(basename(__file__))[0])
     
     config = cast(DictConfig, OmegaConf.load(args.config))
-    if config.num_workers != -1:
-        USE_CPU = min(config.num_workers, cpu_count())
-    else:
-        USE_CPU = cpu_count()
 
     dataset_root = join(config.data_folder, config.dataset.name)
     if args.use_temp_data:
@@ -52,25 +77,18 @@ if __name__ == "__main__":
     logging.info(f"Completed. Loaded {len(all_slices)} slices.")
 
     logging.info(f"Going over {len(all_slices)} files...")
-    with Manager() as m:
-        message_queue = m.Queue()  # type: ignore
-        pool = Pool(USE_CPU)
-        process_func = functools.partial(process_slice_parallel, queue=message_queue)
-        file_slices: List = [
-            (src_cpp_path, slice_path)
-            for src_cpp_path, slice_path in tqdm(
-                pool.imap_unordered(process_func, all_slices),
-                desc=f"Slices",
-                total=len(all_slices),
-            )
-        ]
-        message_queue.put("finished")
-        pool.close()
-        pool.join()
-    
-    logging.info(f"Completed. Converting to JSON format...")
     file_slices_map = defaultdict(list)
-    for src_cpp_path, slice_path in tqdm(file_slices):
+    for slice_path in tqdm(all_slices, desc="Slices"):
+        source_base = source_base_from_slice(
+            slice_path,
+            config.slice_folder,
+            config.source_root_folder,
+        )
+        try:
+            src_cpp_path = resolve_source_path(source_base)
+        except (FileNotFoundError, RuntimeError):
+            logging.error("Failed to resolve source for slice %s", slice_path)
+            raise
         file_slices_map[src_cpp_path].append(slice_path)
     logging.info(f"Completed. Found {len(file_slices_map)} unique source files.")
     
