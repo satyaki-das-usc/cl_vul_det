@@ -292,6 +292,28 @@ class SliceTokenizer:
         fun_count = 1
         var_count = 1
 
+        def replace_function(match):
+            nonlocal fun_count
+
+            fun_name = match.group(1)
+            if fun_name in self.main_set or fun_name in self.keywords:
+                return fun_name
+            if fun_name not in fun_symbols:
+                fun_symbols[fun_name] = 'FUN' + str(fun_count)
+                fun_count += 1
+            return fun_symbols[fun_name]
+
+        def replace_variable(match):
+            nonlocal var_count
+
+            var_name = match.group(1)
+            if var_name in self.keywords or var_name in self.main_args:
+                return var_name
+            if var_name not in var_symbols:
+                var_symbols[var_name] = 'VAR' + str(var_count)
+                var_count += 1
+            return var_symbols[var_name]
+
         # regular expression to catch multi-line comment
         # rx_comment = re.compile('\*/\s*$')
         # final cleaned gadget output to return to interface
@@ -307,51 +329,8 @@ class SliceTokenizer:
             # replace any non-ASCII characters with empty string
             ascii_line = NON_ASCII_RE.sub('', nocharlit_line)
 
-            # return, in order, all regex matches at string list; preserves order for semantics
-            user_fun = FUNCTION_RE.findall(ascii_line)
-            user_var = VARIABLE_RE.findall(ascii_line)
-
-            # Could easily make a "clean gadget" type class to prevent duplicate functionality
-            # of creating/comparing symbol names for functions and variables in much the same way.
-            # The comparison frozenset, symbol dictionaries, and counters would be class scope.
-            # So would only need to pass a string list and a string literal for symbol names to
-            # another function.
-            for fun_name in user_fun:
-                if fun_name not in self.main_set and fun_name not in self.keywords:
-                    # DEBUG
-                    # print('comparing ' + str(fun_name + ' to ' + str(main_set)))
-                    # print(fun_name + ' diff len from main is ' + str(len({fun_name}.difference(main_set))))
-                    # print('comparing ' + str(fun_name + ' to ' + str(keywords)))
-                    # print(fun_name + ' diff len from keywords is ' + str(len({fun_name}.difference(keywords))))
-                    ###
-                    # check to see if function name already in dictionary
-                    if fun_name not in fun_symbols:
-                        fun_symbols[fun_name] = 'FUN' + str(fun_count)
-                        fun_count += 1
-                    # ensure that only function name gets replaced (no variable name with same
-                    # identifier); uses positive lookforward
-                    ascii_line = re.sub(r'\b(' + fun_name + r')\b(?=\s*\()',
-                                        fun_symbols[fun_name], ascii_line)
-
-            for var_name in user_var:
-                # next line is the nuanced difference between fun_name and var_name
-                if var_name not in self.keywords and var_name not in self.main_args:
-                    # DEBUG
-                    # print('comparing ' + str(var_name + ' to ' + str(keywords)))
-                    # print(var_name + ' diff len from keywords is ' + str(len({var_name}.difference(keywords))))
-                    # print('comparing ' + str(var_name + ' to ' + str(main_args)))
-                    # print(var_name + ' diff len from main args is ' + str(len({var_name}.difference(main_args))))
-                    ###
-                    # check to see if variable name already in dictionary
-                    if var_name not in var_symbols:
-                        var_symbols[var_name] = 'VAR' + str(var_count)
-                        var_count += 1
-                    # ensure that only variable name gets replaced (no function name with same
-                    # identifier); uses negative lookforward
-                    ascii_line = re.sub(
-                        r'\b(' + var_name +
-                        r')\b(?:(?=\s*\w+\()|(?!\s*\w+))(?!\s*\()',
-                        var_symbols[var_name], ascii_line)
+            ascii_line = FUNCTION_RE.sub(replace_function, ascii_line)
+            ascii_line = VARIABLE_RE.sub(replace_variable, ascii_line)
 
             cleaned_gadget.append(ascii_line)
         # return the list of cleaned lines
