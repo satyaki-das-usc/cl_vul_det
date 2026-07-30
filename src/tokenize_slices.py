@@ -1,3 +1,4 @@
+import functools
 import os
 import json
 import pickle
@@ -17,6 +18,11 @@ from src.slice_tokenizer import SliceTokenizer
 
 config = None
 
+@functools.lru_cache(maxsize=32)
+def load_source_lines(src_cpp_path):
+    with open(src_cpp_path, "r") as rfi:
+        return rfi.readlines()
+
 def code_sym_token_exists(slice: nx.DiGraph) -> bool:
     for n in slice:
         if "code_sym_token" in slice.nodes[n]:
@@ -32,8 +38,7 @@ def process_slice_parallel(slice_path):
             return slice_path
         
         src_cpp_path = join(slice_path.partition(config.slice_folder)[0], config.source_root_folder, slice_graph.graph["file_paths"][0])
-        with open(src_cpp_path, "r") as rfi:
-            src_lines = rfi.readlines()
+        src_lines = load_source_lines(src_cpp_path)
 
         tokenizer = SliceTokenizer(slice_graph, src_lines, config)
         tokenized_slice = tokenizer.tokenize_slice()
