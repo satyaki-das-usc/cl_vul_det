@@ -3,7 +3,6 @@ import os
 import json
 import pickle
 
-import networkx as nx
 import logging
 
 from multiprocessing import Manager, Pool, Queue, cpu_count
@@ -16,36 +15,34 @@ from tqdm import tqdm
 from src.common_utils import get_arg_parser, init_log
 
 file_slices = dict()
+slice_metadata = dict()
 
 def process_file_parallel(cpp_path, queue: Queue):
     try:
         all_slices = file_slices[cpp_path]
         unique_vul_slice_set = set()
         unique_vul_slice_list = []
-        unique_nonvul_slice_by_code: Dict[str, str] = {}
+        unique_nonvul_slice_by_code: Dict[bytes, str] = {}
 
         for slice_path in all_slices:
-            with open(slice_path, "rb") as rbfi:
-                slice_graph: nx.DiGraph = pickle.load(rbfi)
-
-            slice_sym_code = slice_graph.graph["slice_sym_code"]
-            if slice_graph.graph["label"]:
-                if slice_sym_code not in unique_vul_slice_set:
-                    unique_vul_slice_set.add(slice_sym_code)
+            label, code_digest = slice_metadata[slice_path]
+            if label:
+                if code_digest not in unique_vul_slice_set:
+                    unique_vul_slice_set.add(code_digest)
                     unique_vul_slice_list.append(slice_path)
                 else:
                     with open("duplicate_slices.txt", "a") as afi:
                         afi.write(f"{slice_path}\n")
             else:
-                if slice_sym_code not in unique_nonvul_slice_by_code:
-                    unique_nonvul_slice_by_code[slice_sym_code] = slice_path
+                if code_digest not in unique_nonvul_slice_by_code:
+                    unique_nonvul_slice_by_code[code_digest] = slice_path
                 else:
                     with open("duplicate_slices.txt", "a") as afi:
                         afi.write(f"{slice_path}\n")
 
         final_unique_nonvul_slice_list = []
-        for slice_sym_code, slice_path in unique_nonvul_slice_by_code.items():
-            if slice_sym_code not in unique_vul_slice_set:
+        for code_digest, slice_path in unique_nonvul_slice_by_code.items():
+            if code_digest not in unique_vul_slice_set:
                 final_unique_nonvul_slice_list.append(slice_path)
             else:
                 with open("duplicate_slices.txt", "a") as afi:
@@ -79,6 +76,12 @@ if __name__ == "__main__":
     with open(file_slices_path, "r") as rfi:
         file_slices = json.load(rfi)
     logging.info(f"Completed. Loaded slices for {len(file_slices)} files.")
+
+    slice_metadata_path = join(dataset_root, config.slice_metadata_filename)
+    logging.info(f"Loading slice metadata from {slice_metadata_path}...")
+    with open(slice_metadata_path, "rb") as rfi:
+        slice_metadata = pickle.load(rfi)
+    logging.info(f"Completed. Loaded metadata for {len(slice_metadata)} slices.")
 
     logging.info(f"Going over {len(file_slices)} files...")
     cpp_paths = list(file_slices.keys())
