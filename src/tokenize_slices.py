@@ -74,12 +74,23 @@ if __name__ == "__main__":
         all_slices = json.load(rfi)
     logging.info(f"Completed. Loaded {len(all_slices)} slices.")
 
+    chunksize = max(
+        1,
+        min(256, len(all_slices) // max(1, USE_CPU * 8)),
+    )
+    logging.info(
+        f"Using {USE_CPU} workers with multiprocessing chunksize {chunksize}."
+    )
     logging.info(f"Going over {len(all_slices)} files...")
     with Pool(USE_CPU) as pool:
         non_empty_slice_paths: List = [
             slice_path
             for slice_path in tqdm(
-                pool.imap_unordered(process_slice_parallel, all_slices),
+                pool.imap_unordered(
+                    process_slice_parallel,
+                    all_slices,
+                    chunksize=chunksize,
+                ),
                 desc=f"Slices",
                 total=len(all_slices),
             )
