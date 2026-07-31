@@ -1,7 +1,6 @@
 import os
 import json
 import pickle
-import hashlib
 from collections import deque
 
 import networkx as nx
@@ -26,16 +25,6 @@ sensi_api_path = ""
 USE_CPU = cpu_count()
 
 feat_name_code_map = dict()
-
-SLICE_CODE_DIGEST_SIZE = 16
-
-
-def slice_code_digest(slice_sym_code: str) -> bytes:
-    return hashlib.blake2b(
-        slice_sym_code.encode("utf-8"),
-        digest_size=SLICE_CODE_DIGEST_SIZE,
-    ).digest()
-
 
 def get_forward_slice_lines(CPG: nx.DiGraph, line_no: int) -> Set[int]:
     slice_lines = set()
@@ -370,28 +359,22 @@ def build_CPG(code_path: str,
 def write_slices(
     slices: Dict[str, List[nx.DiGraph]],
     cpp_path: str,
-) -> List[Tuple[str, bool, bytes]]:
+) -> List[str]:
     slice_dir = join(slices_root, dirname(cpp_path))
 
     if not isdir(slice_dir):
         os.makedirs(slice_dir, exist_ok=True)
     
-    slice_metadata = []
+    done_list = []
 
     for key, slice_graphs in slices.items():
         for slice_graph in slice_graphs:
             slice_graph_path = join(slice_dir, f"{splitext(basename(cpp_path))[0]}___{key}__{slice_graph.graph['key_line']}__{slice_graph.graph['type']}.pkl")
             with open(slice_graph_path, "wb") as wfi:
                 pickle.dump(slice_graph, wfi, pickle.HIGHEST_PROTOCOL)
-            slice_metadata.append(
-                (
-                    slice_graph_path,
-                    bool(slice_graph.graph["label"]),
-                    slice_code_digest(slice_graph.graph["slice_sym_code"]),
-                )
-            )
+            done_list.append(slice_graph_path)
     
-    return slice_metadata
+    return done_list
 
 def process_file_parallel(cpp_path):
     try:
@@ -408,19 +391,16 @@ def process_file_parallel(cpp_path):
         logging.error(cpp_path)
         raise e
 
-def collect_slice_metadata(
-    file_results,
-    total_files: int,
-) -> Dict[str, Tuple[bool, bytes]]:
-    slice_metadata = {}
-    for file_metadata in tqdm(
-        file_results,
-        desc="Cpp files",
-        total=total_files,
-    ):
-        for slice_path, label, code_digest in file_metadata:
-            slice_metadata[slice_path] = (label, code_digest)
-    return slice_metadata
+def collect_slice_paths(file_results, total_files: int) -> List:
+    return [
+        file_slice
+        for file_slices in tqdm(
+            file_results,
+            desc="Cpp files",
+            total=total_files,
+        )
+        for file_slice in file_slices
+    ]
 
 def process_dataset(dataset_root: str, config: DictConfig, only_clear_slices: bool):
     global csv_path, slices_root, ground_truth, unperturbed_files, USE_CPU
@@ -492,18 +472,18 @@ def process_dataset(dataset_root: str, config: DictConfig, only_clear_slices: bo
     
     logging.info(f"Going over {len(cpp_paths)} files...")
     if USE_CPU == 1:
-        feat_slice_metadata = collect_slice_metadata(
+        feat_slice_list = collect_slice_paths(
             map(process_file_parallel, cpp_paths),
             len(cpp_paths),
         )
     else:
         with Pool(USE_CPU) as pool:
-            feat_slice_metadata = collect_slice_metadata(
+            feat_slice_list = collect_slice_paths(
                 pool.imap_unordered(process_file_parallel, cpp_paths),
                 len(cpp_paths),
             )
     
-    return feat_slice_metadata
+    return feat_slice_list
 
 def main(args: argparse.Namespace):
     global sensi_api_path, USE_CPU
@@ -524,33 +504,22 @@ def main(args: argparse.Namespace):
     else:
         logging.info(f"Processing {config.dataset.name} data from {dataset_root}...")
 
-    all_slice_metadata = {}
+    all_slice_list = []
     if config.dataset.name != config.VF_perts_root or args.use_temp_data:
-        all_slice_metadata.update(
-            process_dataset(dataset_root, config, args.only_clear_slices)
-        )
+        all_slice_list += process_dataset(dataset_root, config, args.only_clear_slices)
     else:
         global feat_name_code_map
         feat_name_code_map = {feat_name: idx for idx, feat_name in enumerate(config.vul_feats)}
         for feat_name in config.vul_feats:
             logging.info(f"Processing {feat_name}...")
             feat_dir = join(dataset_root, feat_name)
-            all_slice_metadata.update(
-                process_dataset(feat_dir, config, args.only_clear_slices)
-            )
+            all_slice_list += process_dataset(feat_dir, config, args.only_clear_slices)
 
-    all_slice_list = list(all_slice_metadata)
     all_slices_filepath = join(dataset_root, config.all_slices_filename)
     logging.info(f"Writing {len(all_slice_list)} slices to {all_slices_filepath}...")
     with open(all_slices_filepath, "w") as wfi:
         json.dump(all_slice_list, wfi, indent=2)
     logging.info(f"Completed.")
-
-    slice_metadata_filepath = join(dataset_root, config.slice_metadata_filename)
-    logging.info(f"Writing slice metadata to {slice_metadata_filepath}...")
-    with open(slice_metadata_filepath, "wb") as wfi:
-        pickle.dump(all_slice_metadata, wfi, pickle.HIGHEST_PROTOCOL)
-    logging.info("Completed.")
     logging.info("=========End session=========")
     logging.shutdown()
 

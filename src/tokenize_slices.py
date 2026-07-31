@@ -1,4 +1,5 @@
 import functools
+import hashlib
 import os
 import json
 import pickle
@@ -17,6 +18,17 @@ from src.common_utils import get_arg_parser, init_log
 from src.slice_tokenizer import SliceTokenizer
 
 config = None
+
+SLICE_CODE_DIGEST_SIZE = 16
+
+
+def slice_metadata(slice_path: str, slice_graph: nx.DiGraph):
+    code_digest = hashlib.blake2b(
+        slice_graph.graph["slice_sym_code"].encode("utf-8"),
+        digest_size=SLICE_CODE_DIGEST_SIZE,
+    ).digest()
+    return slice_path, bool(slice_graph.graph["label"]), code_digest
+
 
 @functools.lru_cache(maxsize=32)
 def load_source_lines(src_cpp_path):
@@ -39,7 +51,7 @@ def process_slice_parallel(slice_path):
             slice_graph: nx.DiGraph = pickle.load(rbfi)
     
         if slice_is_tokenized(slice_graph):
-            return slice_path
+            return slice_metadata(slice_path, slice_graph)
         
         src_cpp_path = join(slice_path.partition(config.slice_folder)[0], config.source_root_folder, slice_graph.graph["file_paths"][0])
         src_lines = load_source_lines(src_cpp_path)
@@ -49,14 +61,14 @@ def process_slice_parallel(slice_path):
 
         if len(tokenized_slice.nodes) == 0:
             os.remove(slice_path)
-            return ""
+            return None
         if len(tokenized_slice.edges) == 0:
             os.remove(slice_path)
-            return ""
+            return None
         with open(slice_path, "wb") as wbfi:
             pickle.dump(tokenized_slice, wbfi, pickle.HIGHEST_PROTOCOL)
         
-        return slice_path
+        return slice_metadata(slice_path, tokenized_slice)
         
     except Exception as e:
         logging.error(slice_path)
@@ -91,25 +103,34 @@ if __name__ == "__main__":
         f"Using {USE_CPU} workers with multiprocessing chunksize {chunksize}."
     )
     logging.info(f"Going over {len(all_slices)} files...")
+    non_empty_slice_paths: List = []
+    slice_metadata_map = {}
     with Pool(USE_CPU) as pool:
-        non_empty_slice_paths: List = [
-            slice_path
-            for slice_path in tqdm(
-                pool.imap_unordered(
-                    process_slice_parallel,
-                    all_slices,
-                    chunksize=chunksize,
-                ),
-                desc=f"Slices",
-                total=len(all_slices),
-            )
-            if slice_path != ""
-        ]
+        for metadata in tqdm(
+            pool.imap_unordered(
+                process_slice_parallel,
+                all_slices,
+                chunksize=chunksize,
+            ),
+            desc=f"Slices",
+            total=len(all_slices),
+        ):
+            if metadata is None:
+                continue
+            slice_path, label, code_digest = metadata
+            non_empty_slice_paths.append(slice_path)
+            slice_metadata_map[slice_path] = (label, code_digest)
     
     logging.info(f"Tokenized {len(non_empty_slice_paths)} slices.")
     logging.info(f"Saving tokenized slices to {all_slices_filepath}...")
     with open(all_slices_filepath, "w") as wfi:
         json.dump(non_empty_slice_paths, wfi, indent=2)
     logging.info(f"Completed.")
+
+    slice_metadata_filepath = join(dataset_root, config.slice_metadata_filename)
+    logging.info(f"Saving slice metadata to {slice_metadata_filepath}...")
+    with open(slice_metadata_filepath, "wb") as wfi:
+        pickle.dump(slice_metadata_map, wfi, pickle.HIGHEST_PROTOCOL)
+    logging.info("Completed.")
     logging.info("=========End session=========")
     logging.shutdown()
