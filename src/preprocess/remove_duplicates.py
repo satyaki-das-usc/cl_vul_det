@@ -15,6 +15,7 @@ from src.common_utils import get_arg_parser, init_log
 file_slices = dict()
 slice_metadata = dict()
 
+
 def process_file_parallel(cpp_path):
     try:
         all_slices = file_slices[cpp_path]
@@ -53,6 +54,37 @@ def process_file_parallel(cpp_path):
         logging.error(cpp_path)
         raise e
 
+def build_cpp_batches(cpp_paths, num_workers):
+    total_work = sum(max(1, len(file_slices[cpp_path])) for cpp_path in cpp_paths)
+    target_batch_work = max(1, total_work // (num_workers * 8))
+
+    batches = []
+    current_batch = []
+    current_batch_work = 0
+    for cpp_path in cpp_paths:
+        cpp_work = max(1, len(file_slices[cpp_path]))
+        if current_batch and current_batch_work + cpp_work > target_batch_work:
+            batches.append(current_batch)
+            current_batch = []
+            current_batch_work = 0
+
+        current_batch.append(cpp_path)
+        current_batch_work += cpp_work
+
+    if current_batch:
+        batches.append(current_batch)
+
+    return batches
+
+def process_file_batch(cpp_paths):
+    unique_slices = []
+    duplicate_slices = []
+    for cpp_path in cpp_paths:
+        file_unique_slices, file_duplicate_slices = process_file_parallel(cpp_path)
+        unique_slices.extend(file_unique_slices)
+        duplicate_slices.extend(file_duplicate_slices)
+    return unique_slices, duplicate_slices
+
 if __name__ == "__main__":
     arg_parser = get_arg_parser()
     args = arg_parser.parse_args()
@@ -85,11 +117,12 @@ if __name__ == "__main__":
     unique_slice_list = []
     duplicate_slices = set()
     if USE_CPU > 1:
+        cpp_batches = build_cpp_batches(cpp_paths, USE_CPU)
         with Pool(USE_CPU) as pool:
             for file_unique_slices, file_duplicate_slices in tqdm(
-                pool.imap_unordered(process_file_parallel, cpp_paths),
-                desc=f"Cpp files",
-                total=len(cpp_paths),
+                pool.imap_unordered(process_file_batch, cpp_batches),
+                desc="Cpp file batches",
+                total=len(cpp_batches),
             ):
                 unique_slice_list.extend(file_unique_slices)
                 duplicate_slices.update(file_duplicate_slices)
