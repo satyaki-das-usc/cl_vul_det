@@ -103,6 +103,11 @@ def get_argument_parser():
         help="Path to a JSON list of slice graph pickle files.",
     )
     parser.add_argument(
+        "--vocab",
+        required=True,
+        help="Path to the Word2Vec vocabulary .wv file used by the model.",
+    )
+    parser.add_argument(
         "-c",
         "--config",
         default="configs/dwk.yaml",
@@ -134,11 +139,13 @@ def get_argument_parser():
 def resolve_arguments(args):
     checkpoint_path = Path(args.checkpoint).expanduser().resolve()
     test_file = Path(args.test_file).expanduser().resolve()
+    vocab_path = Path(args.vocab).expanduser().resolve()
     config_path = Path(args.config).expanduser().resolve()
 
     for description, path in (
             ("Checkpoint", checkpoint_path),
             ("Test JSON file", test_file),
+            ("Vocabulary file", vocab_path),
             ("Config file", config_path)):
         if not path.is_file():
             raise FileNotFoundError(f"{description} not found: {path}")
@@ -154,18 +161,14 @@ def resolve_arguments(args):
         )
     else:
         output_path = Path(args.output).expanduser().resolve()
-    return checkpoint_path, test_file, config_path, output_path
+    return checkpoint_path, test_file, vocab_path, config_path, output_path
 
 
 def load_model(
         config: DictConfig,
         checkpoint_path: Path,
+        vocab_path: Path,
         device: torch.device):
-    dataset_root = Path(config.data_folder) / config.dataset.name
-    vocab_path = dataset_root / "w2v.wv"
-    if not vocab_path.is_file():
-        raise FileNotFoundError(f"Vocabulary not found: {vocab_path}")
-
     vocab = Vocabulary.from_w2v(str(vocab_path))
     model = GraphSwAVVD(
         config,
@@ -239,16 +242,26 @@ def predict(model, data_loader, device: torch.device):
 def main():
     filter_warnings()
     args = get_argument_parser().parse_args()
-    checkpoint_path, test_file, config_path, output_path = resolve_arguments(
-        args
-    )
+    (
+        checkpoint_path,
+        test_file,
+        vocab_path,
+        config_path,
+        output_path,
+    ) = resolve_arguments(args)
     init_log(Path(__file__).stem)
 
     config = cast(DictConfig, OmegaConf.load(config_path))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logging.info(f"Device: {device}")
     logging.info(f"Loading checkpoint: {checkpoint_path}")
-    vocab, model = load_model(config, checkpoint_path, device)
+    logging.info(f"Loading vocabulary: {vocab_path}")
+    vocab, model = load_model(
+        config,
+        checkpoint_path,
+        vocab_path,
+        device,
+    )
 
     dataset = UnlabeledSliceDataset(test_file, config, vocab)
     batch_size = args.batch_size or int(
@@ -272,6 +285,7 @@ def main():
     output = {
         "checkpoint": str(checkpoint_path),
         "test_file": str(test_file),
+        "vocabulary": str(vocab_path),
         "num_slices": len(predictions),
         "num_predicted_vulnerable": len(vulnerable_predictions),
         "vulnerable_predictions": vulnerable_predictions,
