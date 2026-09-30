@@ -264,13 +264,10 @@ def log_validation_metrics(
     ctx.writer.flush()
 
 def validate_training_views(ctx: TrainingContext, num_views: int):
-    if num_views < 2:
+    if num_views < 1:
+        raise ValueError(f"Training requires at least 1 augmented view, got {num_views}.")
+    if is_lambda_enabled(ctx, "swav") and num_views < 2:
         raise ValueError(f"SwAV loss requires at least 2 augmented views, got {num_views}.")
-    if is_contrastive_enabled(ctx) and num_views != 2:
-        raise ValueError(
-            "Contrastive loss currently expects exactly 2 augmented views, "
-            f"got {num_views}."
-        )
 
 def forward_model(
         ctx: TrainingContext,
@@ -536,11 +533,14 @@ def compute_training_loss(
         if ctx.contrastive_criterion is None:
             raise RuntimeError("contrastive_criterion is not initialized.")
         if ctx.config.swav.contrastive.criterion == "info_nce":
-            contrastive_loss = (ctx.contrastive_criterion(anchor_graph_encodings, graph_encodings[0]) + ctx.contrastive_criterion(anchor_graph_encodings, graph_encodings[1])) / 2.0
+            contrastive_loss = sum(
+                ctx.contrastive_criterion(anchor_graph_encodings, view)
+                for view in graph_encodings
+            ) / num_views
         elif ctx.config.swav.contrastive.criterion == "supcon":
-            contrastive_loss = ctx.contrastive_criterion(torch.stack([anchor_graph_encodings, graph_encodings[0], graph_encodings[1]], dim=1), labels=labels)
+            contrastive_loss = ctx.contrastive_criterion(torch.stack([anchor_graph_encodings, *graph_encodings], dim=1), labels=labels)
         elif ctx.config.swav.contrastive.criterion == "simclr":
-            contrastive_loss = ctx.contrastive_criterion(torch.stack([anchor_graph_encodings, graph_encodings[0], graph_encodings[1]], dim=1))
+            contrastive_loss = ctx.contrastive_criterion(torch.stack([anchor_graph_encodings, *graph_encodings], dim=1))
         else:
             raise ValueError(f"Unsupported contrastive criterion: {ctx.config.swav.contrastive.criterion}")
 
@@ -770,6 +770,14 @@ def require_checkpoint(checkpoint_path: Path, description: str):
 def load_config_from_args(args) -> DictConfig:
     config = cast(DictConfig, OmegaConf.load(args.config))
 
+    if args.n_views is not None:
+        OmegaConf.update(config, "swav.n_views", args.n_views, force_add=True)
+    n_views = int(config.swav.get("n_views", 2))
+    if n_views < 1:
+        raise ValueError("swav.n_views must be >= 1")
+    if n_views < 2 and float(config.hyper_parameters.lambdas.get("swav", 0.0)) > 0:
+        raise ValueError("SwAV loss requires at least 2 augmented views; disable it for n_views=1.")
+
     if args.no_cl:
         OmegaConf.update(config, "swav.contrastive.enabled", False, force_add=True)
     if args.exclude_NNs:
@@ -846,6 +854,8 @@ def load_vocab_and_model(ctx: TrainingContext, dataset_root: Path):
 
 
 def add_swav_arguments(arg_parser):
+    arg_parser.add_argument("--n_views", type=int, default=None,
+                            help="Number of augmented views per sample, excluding the original (default: swav.n_views or 2).")
     arg_parser.add_argument("--skip_training", action='store_true', help="Skip training phase")
     arg_parser.add_argument("--no_cl", action='store_true', help="Disable contrastive learning")
     arg_parser.add_argument("--exclude_NNs", action='store_true', help="Exclude NN pairs if contrastive pair filtering is used")
@@ -923,6 +933,9 @@ def build_checkpoint_paths(
         / attention_distribution_text
         / sampler_text
     )
+    n_views = int(config.swav.get("n_views", 2))
+    if n_views != 2:
+        checkpoint_dir = checkpoint_dir / f"AugmentedViews-{n_views}"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     model_name = model.__class__.__name__

@@ -15,8 +15,8 @@ from src.torch_data.graphs import SliceGraph
 from src.torch_data.samples import SliceGraphSample
 from src.swav.graph_augmentations import generate_template_augmentations
 
-def generate_SF_augmentations_per_sample(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int):
-    return generate_template_augmentations(slice_graph, vocab, max_len, n_views=2)
+def generate_SF_augmentations_per_sample(slice_graph: nx.DiGraph, vocab: Vocabulary, max_len: int, n_views: int = 2):
+    return generate_template_augmentations(slice_graph, vocab, max_len, n_views=n_views)
 
 class SliceDataset(Dataset):
     def __init__(
@@ -59,6 +59,7 @@ class SliceDataset(Dataset):
                 slice_graph.slice_graph,
                 self.__vocab,
                 self.__max_len,
+                n_views=int(self.__config.get("swav", {}).get("n_views", 2)),
             )
         return SliceGraphSample(
             graph=slice_graph.to_torch_graph(self.__vocab, self.__config.dataset.token.max_parts),
