@@ -58,6 +58,7 @@ dataset:
 min_vul_per_batch: 3
 min_nonvul_per_batch: 1
 swav:
+  n_views: 2
   batch_size: 256
   learning_rate: 0.002
   warmup_epochs: 0
